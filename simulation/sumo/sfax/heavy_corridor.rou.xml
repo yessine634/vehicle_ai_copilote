@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+    <vType id="heavy_corridor_type" vClass="passenger" accel="2.4" decel="4.5"
+           sigma="0.5" length="5.0" minGap="2.5" maxSpeed="13.9"/>
+    <route id="heavy_corridor_route" edges="497482864#1 1123880525#7 1123880525#8 1123880525#1 1123880525#2 1123880525#3 1123880530 155415825#1 -729708944#8 -729708944#7 -729708944#6 696793234#0 696793234#1 696793233 697551022#0 697551022#1 -497486449#5 520338127#0 520338127#2 520338127#3 729752355#0 729752355#1 729752355#2 729752355#3 729752355#5 729752355#7 729752355#9 35210968#19 -60138860#6 -60138860#4 -60138860#3 -60138860#2 -60138860#1 -60138860#0 -60138782#1 -60138782#0"/>
+    <flow id="heavy_corridor_flow" type="heavy_corridor_type"
+          route="heavy_corridor_route" begin="0" end="600" period="0.3"
+          departLane="best" departSpeed="0"/>
+</routes>

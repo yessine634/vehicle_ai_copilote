@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+    <vType id="passenger" accel="2.6" decel="4.5" sigma="0.2"
+           length="5.0" minGap="2.5" maxSpeed="13.9"/>
+
+    <route id="demo_loop" edges="A0A1 A1B1 B1B0 B0A0"/>
+
+    <vehicle id="ego_vehicle" type="passenger" route="demo_loop"
+             depart="0" departLane="best" departSpeed="0"/>
+    <vehicle id="car_1" type="passenger" route="demo_loop"
+             depart="2" departLane="best" departSpeed="0"/>
+    <vehicle id="car_2" type="passenger" route="demo_loop"
+             depart="4" departLane="best" departSpeed="0"/>
+</routes>
