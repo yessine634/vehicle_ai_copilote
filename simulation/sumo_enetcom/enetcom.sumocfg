@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <input>
+        <net-file value="../sumo_real_route_demo/sfax_route.net.xml.gz"/>
+        <route-files value="enetcom.rou.xml"/>
+    </input>
+    <time>
+        <begin value="0"/>
+        <step-length value="1"/>
+        <end value="2400"/>
+    </time>
+    <processing>
+        <time-to-teleport value="300"/>
+    </processing>
+</configuration>

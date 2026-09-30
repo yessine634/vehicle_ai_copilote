@@ -1,0 +1,73 @@
+name: Python CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python 3.11 and SUMO tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      SUMO_HOME: /usr/share/sumo
+      PYTHONUTF8: "1"
+
+      # Explicitly disable external/live tests.
+      RUN_LIVE_WEATHER_TEST: "0"
+      RUN_LIVE_ROUTING_TEST: "0"
+      RUN_LIVE_TOOL_CALLING_TEST: "0"
+      RUN_LIVE_TOOL_TESTS: "0"
+      RUN_SUMO_GUI_DEMO: "0"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install SUMO
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes sumo sumo-tools
+
+      - name: Display SUMO version
+        run: |
+          sumo --version
+          echo "SUMO_HOME=$SUMO_HOME"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r requirements.txt
+          python -m pip check
+
+      - name: Verify SUMO Python integration
+        run: |
+          python tests/test_sumo_install.py
+
+      - name: Compile Python files
+        run: |
+          python -m compileall agent simulation tools tests
+
+      - name: Run unit and headless integration tests
+        run: |
+          python -m unittest discover -s tests -p "test_*.py" -v
