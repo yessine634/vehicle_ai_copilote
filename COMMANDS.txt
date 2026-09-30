@@ -1,0 +1,224 @@
+AGENTIC VEHICLE AI COPILOT - COMMAND REFERENCE
+================================================
+
+These commands are written for Windows Anaconda Prompt (cmd.exe).
+Run them from the project root unless stated otherwise.
+
+
+1. ACTIVATE THE ENVIRONMENT AND OPEN THE PROJECT
+------------------------------------------------
+
+conda activate llm-env
+cd C:\Users\Yessine\Desktop\vehicle_ai_copilote
+
+Verify the active Python environment:
+
+where python
+python --version
+
+
+2. RUN ALL NORMAL TESTS
+-----------------------
+
+Normal tests do not run optional live API or GUI tests.
+
+python -m unittest discover -s tests -p "test_*.py" -v
+
+Run individual test modules:
+
+python -m unittest tests.test_weather -v
+python -m unittest tests.test_routing -v
+python -m unittest tests.test_vehicle -v
+python -m unittest tests.test_ev_health -v
+python -m unittest tests.test_osm_network -v
+python -m unittest tests.test_sumo_runner -v
+python -m unittest tests.test_sumo_real_route -v
+python -m unittest tests.test_trip_simulator -v
+python -m unittest tests.test_all_tools -v
+
+
+3. VERIFY THE SUMO INSTALLATION
+-------------------------------
+
+python tests\test_sumo_install.py
+
+
+4. RUN THE SFAX ELECTRIC-VEHICLE SIMULATION
+--------------------------------------------
+
+Run without the graphical interface:
+
+python -m simulation.sumo_sfax
+
+Run with SUMO GUI:
+
+set RUN_SUMO_GUI_DEMO=1
+python -m simulation.sumo_sfax
+set RUN_SUMO_GUI_DEMO=
+
+
+5. SELECT THE SUMO TRAFFIC LEVEL
+--------------------------------
+
+Available values: low, normal, heavy
+
+Heavy traffic with GUI:
+
+set SUMO_TRAFFIC_LEVEL=heavy
+set RUN_SUMO_GUI_DEMO=1
+python -m simulation.sumo_sfax
+set SUMO_TRAFFIC_LEVEL=
+set RUN_SUMO_GUI_DEMO=
+
+Low traffic without GUI:
+
+set SUMO_TRAFFIC_LEVEL=low
+python -m simulation.sumo_sfax
+set SUMO_TRAFFIC_LEVEL=
+
+
+6. CONFIGURE THE ELECTRIC VEHICLE
+---------------------------------
+
+Example: 65 percent initial battery and 32 degrees Celsius:
+
+set SUMO_INITIAL_SOC_PERCENT=65
+set SUMO_AMBIENT_TEMPERATURE_C=32
+python -m simulation.sumo_sfax
+set SUMO_INITIAL_SOC_PERCENT=
+set SUMO_AMBIENT_TEMPERATURE_C=
+
+Combined EV, traffic, and GUI configuration:
+
+set SUMO_TRAFFIC_LEVEL=heavy
+set SUMO_INITIAL_SOC_PERCENT=70
+set SUMO_AMBIENT_TEMPERATURE_C=30
+set RUN_SUMO_GUI_DEMO=1
+python -m simulation.sumo_sfax
+
+Clear the settings afterward:
+
+set SUMO_TRAFFIC_LEVEL=
+set SUMO_INITIAL_SOC_PERCENT=
+set SUMO_AMBIENT_TEMPERATURE_C=
+set RUN_SUMO_GUI_DEMO=
+
+
+7. RUN THE AIN KM 4 TO TENIOUR KM 8 ROUTE
+------------------------------------------
+
+Without GUI:
+
+python -m simulation.sumo_real_route
+
+With GUI:
+
+set RUN_SUMO_GUI_DEMO=1
+python -m simulation.sumo_real_route
+set RUN_SUMO_GUI_DEMO=
+
+
+8. RUN LIVE API AND LLM TESTS
+-----------------------------
+
+Before running these tests, place the required keys in .env:
+
+GROQ_API_KEY=your_key
+ROUTING_API_KEY=your_key_if_required
+
+Do not publish or commit real API keys.
+
+Live Open-Meteo weather test:
+
+set RUN_LIVE_WEATHER_TEST=1
+python -m unittest tests.test_weather -v
+set RUN_LIVE_WEATHER_TEST=
+
+Live routing test:
+
+set RUN_LIVE_ROUTING_TEST=1
+python -m unittest tests.test_routing -v
+set RUN_LIVE_ROUTING_TEST=
+
+Live Groq routing-tool conversation:
+
+set RUN_LIVE_TOOL_CALLING_TEST=1
+python -m unittest tests.test_tool_calling.LiveToolCallingTests -v
+set RUN_LIVE_TOOL_CALLING_TEST=
+
+Live Groq tests using weather, routing, and the real SUMO vehicle:
+
+set RUN_LIVE_TOOL_TESTS=1
+python -m unittest tests.test_all_tools.LiveAllToolsTests -v
+set RUN_LIVE_TOOL_TESTS=
+
+Run one live tool question at a time:
+
+set RUN_LIVE_TOOL_TESTS=1
+python -m unittest tests.test_all_tools.LiveAllToolsTests.test_weather_selection_live -v
+python -m unittest tests.test_all_tools.LiveAllToolsTests.test_route_selection_live -v
+python -m unittest tests.test_all_tools.LiveAllToolsTests.test_vehicle_selection_live -v
+set RUN_LIVE_TOOL_TESTS=
+
+
+9. OPEN THE COPILOT CHAT NOTEBOOK
+---------------------------------
+
+Using Jupyter Notebook:
+
+jupyter notebook tests\copilot_tools_chat.ipynb
+
+Using JupyterLab:
+
+jupyter lab tests\copilot_tools_chat.ipynb
+
+Select the llm-env kernel and run the cells from top to bottom.
+
+
+10. CURRENT COMPLETE-PROJECT STATUS
+------------------------------------
+
+The LangGraph modules exist under agent/, but main.py and ui/app.py do not yet
+contain runnable application implementations. Therefore these commands are not
+complete application launchers yet:
+
+python main.py
+streamlit run ui\app.py
+
+Until those entry points are implemented, use this command for the most complete
+Groq + weather + routing + SUMO vehicle integration test:
+
+set RUN_LIVE_TOOL_TESTS=1
+python -m unittest tests.test_all_tools.LiveAllToolsTests -v
+set RUN_LIVE_TOOL_TESTS=
+
+Use this command for the visual SUMO simulation:
+
+set RUN_SUMO_GUI_DEMO=1
+python -m simulation.sumo_sfax
+set RUN_SUMO_GUI_DEMO=
+
+
+11. RUN ROUTE EL AIN KM 4 TO ENET'COM WITH CONGESTION
+-----------------------------------------------------
+
+Watch the green electric car in a busy commuter flow. The default delay is
+0.15 real seconds for every simulated second:
+
+set RUN_SUMO_GUI_DEMO=1
+set SUMO_GUI_DELAY_SECONDS=0.15
+python -m simulation.sumo_enetcom
+set RUN_SUMO_GUI_DEMO=
+set SUMO_GUI_DELAY_SECONDS=
+
+For slower playback, use a larger delay such as 0.30:
+
+set RUN_SUMO_GUI_DEMO=1
+set SUMO_GUI_DELAY_SECONDS=0.30
+python -m simulation.sumo_enetcom
+set RUN_SUMO_GUI_DEMO=
+set SUMO_GUI_DELAY_SECONDS=
+
+Run the same scenario quickly without the graphical interface:
+
+python -m simulation.sumo_enetcom

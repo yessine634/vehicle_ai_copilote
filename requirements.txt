@@ -1,6 +1,7 @@
 # Agent orchestration and LLM access
 langgraph
-groq
+langchain-core
+langchain-groq
 
 # API and configuration support
 requests

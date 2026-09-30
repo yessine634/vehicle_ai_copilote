@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+    <!-- Hyundai IONIQ 5 Long Range RWD ego vehicle. -->
+    <vType id="ioniq5_long_range_rwd" vClass="passenger"
+           accel="2.6" decel="4.5" sigma="0.2" length="5.0"
+           minGap="2.5" maxSpeed="51.39" color="green"
+           guiShape="passenger" mass="1830" emissionClass="Energy/unknown">
+        <param key="has.battery.device" value="true"/>
+        <param key="device.battery.capacity" value="84000"/>
+        <param key="maximumPower" value="168000"/>
+        <param key="frontSurfaceArea" value="2.6"/>
+        <param key="airDragCoefficient" value="0.35"/>
+        <param key="rotatingMass" value="40"/>
+        <param key="radialDragCoefficient" value="0.1"/>
+        <param key="rollDragCoefficient" value="0.01"/>
+        <param key="constantPowerIntake" value="100"/>
+        <param key="propulsionEfficiency" value="0.98"/>
+        <param key="recuperationEfficiency" value="0.96"/>
+        <param key="stoppingThreshold" value="0.1"/>
+    </vType>
+
+    <!-- Imperfect human driving and speed variation make the traffic less uniform. -->
+    <vType id="commuter" vClass="passenger" accel="2.3" decel="4.5"
+           sigma="0.5" length="5.0" minGap="2.5" maxSpeed="19.44"
+           speedFactor="normc(0.95,0.10,0.70,1.15)"
+           color="yellow" guiShape="passenger"/>
+
+    <route id="ain_to_enetcom" edges="497482864#1 1123880525#7 1123880525#8 1123880525#1 1123880525#2 1123880525#3 1123880530 155415825#1 155415825#2 155415825#2-AddedOffRampEdge 1123880524#0 1123880524#0-AddedOffRampEdge 1123880524#1 1123880522#2 1123880522#3 1123880522#4 1123880521 155415827#1-AddedOnRampEdge 155415827#1 155415827#2 893311854 35211837#2 35211837#3 35211837#4 35211837#5 35212251 35211825#0 35211825#1 35211825#2 35211825#3 35211825#4 35211825#5 35211825#6 35211825#7 35211825#8 497904667 -188279316#32 -188279316#30 -188279316#29 -188279316#28 -188279316#27 -188279316#24 -188279316#23 -188279316#22 -188279316#21 -188279316#20 -37767709#3 -37767709#2 -37767709#1 -37767709#0 37386510#3 37386510#4 37386510#5 37386510#6 37386510#7 37386510#9 37386510#10 37386510#11 37386510#13 37386510#14 37386510#16 37386510#17 37386510#18 29501148#9 29501603#0 29501603#1 29501603#2 29501603#3 -498049059#30 -498049059#29 -498049059#28 -498049059#27 -498049059#26 -498049059#24 -498049059#23 -498049059#22 -498049059#21 -498049059#20 -498049059#19 -498049059#18 -498049059#17 -498049059#16 -498049059#15 -498049059#14 -498049059#13 -498049059#12 -498049059#11 -498049059#10 -498049059#8 -498049059#7 -498049059#5 -498049059#4 -498049059#3 -498049059#0 693730706#1 693730706#5 693730706#6-AddedOnRampEdge 693730706#6 -693730708#34 -693730708#32 -693730708#31 -693730708#29 -693730708#28 -693730708#27 -693730708#26 -693730708#25 -693730708#24 -693730708#23 -693730708#21 -693730708#20 -693730708#18 -693730708#17 -693730708#16 -693730708#14 -693730708#13 -693730708#11 -693730708#9 -693730708#8 -693730708#7 -693730708#6 -693730708#5 -693730708#4 -693730708#2 -693730708#1 498049063 392116122#6 32899556 693550414#0 -320516291#7 -320516291#6 320516368#0 320516368#1 320516368#2 320516368#3 320516368#4 -85182728#5 -85182728#4 -85182728#3 -85182728#2 -85182728#1 693026119#0 693026119#1 693026119#2 693026119#3 693026119#4 693031599#1 693031599#2 693031599#3 -320512703#1 -320512703#0"/>
+
+    <!-- About 1,800 vehicles/hour: deliberately busy, but not an instant gridlock. -->
+    <flow id="commuter_flow" type="commuter" route="ain_to_enetcom"
+          begin="0" end="1200" period="2.0"
+          departLane="best" departSpeed="max"/>
+
+    <!-- Depart behind a few background vehicles so congestion is visible. -->
+    <vehicle id="ego_vehicle" type="ioniq5_long_range_rwd"
+             route="ain_to_enetcom" depart="5" departLane="best"
+             departSpeed="0">
+        <param key="device.battery.chargeLevel" value="67200"/>
+    </vehicle>
+</routes>
