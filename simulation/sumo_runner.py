@@ -131,9 +131,18 @@ class SumoTrafficSimulator:
         try:
             traci.start(command)
         except Exception as exc:
-            raise RuntimeError(
-                f"SUMO could not start with configuration: {self.config_file}"
-            ) from exc
+    # Clean up a partially-created TraCI connection
+    # if SUMO crashes during startup.
+            try:
+                traci.close(False)
+            except Exception:
+                pass
+
+        self._running = False
+
+        raise RuntimeError(
+        f"SUMO could not start with configuration: {self.config_file}"
+    ) from exc
 
         self._running = True
         self._configured_ev_ids.clear()
