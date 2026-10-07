@@ -111,6 +111,45 @@ class VehicleToolTests(unittest.TestCase):
         self.assertIn("battery_temperature_c", state["health"])
         self.assertIn("motor_temperature_c", state["health"])
 
+    def test_trip_metadata_is_exposed_when_supported(self) -> None:
+        self.simulator.get_state.return_value = {
+            **SIMULATOR_STATE,
+            "origin": {
+                "name": "Route El Ain, central Sfax",
+                "city": "Sfax",
+                "country": "Tunisia",
+                "latitude": 34.7518952,
+                "longitude": 10.7296079,
+            },
+            "destination": {
+                "name": "North-east central Sfax",
+                "city": "Sfax",
+                "country": "Tunisia",
+                "latitude": 34.762,
+                "longitude": 10.746,
+            },
+            "route": {
+                "distance_km": 1.824,
+                "duration_minutes": None,
+                "uses_highway": False,
+                "has_toll": False,
+                "has_ferry": False,
+            },
+        }
+
+        state = get_vehicle_state(self.simulator)
+
+        self.assertEqual(
+            state["trip"]["origin"]["name"],
+            "Route El Ain, central Sfax",
+        )
+        self.assertEqual(
+            state["trip"]["destination"]["name"],
+            "North-east central Sfax",
+        )
+        self.assertEqual(state["trip"]["origin"]["city"], "Sfax")
+        self.assertEqual(state["trip"]["route"]["distance_km"], 1.824)
+
     def test_missing_simulator_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "TripSimulator instance"):
             get_vehicle_state(None)  # type: ignore[arg-type]

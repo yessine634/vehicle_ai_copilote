@@ -34,7 +34,7 @@ def create_vehicle_tool(simulator: VehicleStateProvider) -> BaseTool:
 
 
 def build_tools(simulator: VehicleStateProvider) -> list[BaseTool]:
-    """Return all tools available to the copilot."""
+    """Return all tools connected to the active SUMO simulation."""
 
     return [
         weather_tool,
