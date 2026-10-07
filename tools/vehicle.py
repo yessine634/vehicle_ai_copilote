@@ -179,6 +179,71 @@ def _normalize_health(health: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_location(location: Mapping[str, Any], label: str) -> dict[str, Any]:
+    """Validate a named trip endpoint supplied by ``TripSimulator``."""
+
+    name = location.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise VehicleStateError(f"Vehicle trip {label} is missing a valid name.")
+
+    country = location.get("country")
+    if country is not None and not isinstance(country, str):
+        raise VehicleStateError(
+            f"Vehicle trip {label} country must be text or None."
+        )
+
+    city = location.get("city")
+    if city is not None and (not isinstance(city, str) or not city.strip()):
+        raise VehicleStateError(
+            f"Vehicle trip {label} city must be non-empty text or None."
+        )
+
+    return {
+        "name": name.strip(),
+        "city": city.strip() if isinstance(city, str) else None,
+        "country": country,
+        "latitude": _required_number(
+            location, "latitude", minimum=-90.0, maximum=90.0
+        ),
+        "longitude": _required_number(
+            location, "longitude", minimum=-180.0, maximum=180.0
+        ),
+    }
+
+
+def _normalize_trip(raw_state: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return compact trip metadata when the simulator provides it."""
+
+    origin = raw_state.get("origin")
+    destination = raw_state.get("destination")
+    route = raw_state.get("route")
+
+    if origin is None and destination is None and route is None:
+        return None
+    if not isinstance(origin, Mapping) or not isinstance(destination, Mapping):
+        raise VehicleStateError(
+            "Vehicle trip metadata must include origin and destination mappings."
+        )
+
+    normalized: dict[str, Any] = {
+        "origin": _normalize_location(origin, "origin"),
+        "destination": _normalize_location(destination, "destination"),
+    }
+
+    if route is not None:
+        if not isinstance(route, Mapping):
+            raise VehicleStateError("Vehicle trip route must be a mapping.")
+        normalized["route"] = {
+            "distance_km": _required_number(route, "distance_km", minimum=0.0),
+            "duration_minutes": _optional_number(route, "duration_minutes"),
+            "uses_highway": bool(route.get("uses_highway", False)),
+            "has_toll": bool(route.get("has_toll", False)),
+            "has_ferry": bool(route.get("has_ferry", False)),
+        }
+
+    return normalized
+
+
 def get_vehicle_state(simulator: VehicleStateProvider) -> dict[str, Any]:
     """Return a validated, agent-friendly view of a started trip simulator."""
 
@@ -268,6 +333,9 @@ def get_vehicle_state(simulator: VehicleStateProvider) -> dict[str, Any]:
         "ev": _normalize_ev(ev),
         "health": _normalize_health(health),
     }
+    trip = _normalize_trip(raw_state)
+    if trip is not None:
+        normalized_state["trip"] = trip
     if traffic is not None:
         if not isinstance(traffic, Mapping):
             raise VehicleStateError("Vehicle state field 'traffic' must be a mapping.")

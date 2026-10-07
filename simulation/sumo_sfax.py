@@ -20,12 +20,14 @@ SFAX_CONFIGS = {
 }
 SFAX_ORIGIN = {
     "name": "Route El Ain, central Sfax",
+    "city": "Sfax",
     "country": "Tunisia",
     "latitude": 34.7518952,
     "longitude": 10.7296079,
 }
 SFAX_DESTINATION = {
     "name": "North-east central Sfax",
+    "city": "Sfax",
     "country": "Tunisia",
     "latitude": 34.762,
     "longitude": 10.746,
