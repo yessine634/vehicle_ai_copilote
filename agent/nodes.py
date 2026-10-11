@@ -261,7 +261,10 @@ def create_final_answer_node(llm):
                 "Answer the driver clearly and concisely. Clearly identify "
                 "estimated or simulated information. Never state "
                 "charging-station availability because no charging-station "
-                "tool is available.\n\n"
+                "tool is available. Use EV estimator values exactly as "
+                "provided. Do not independently recalculate energy, "
+                "consumption, SOC, range, reserve, or trip "
+                "feasibility.\n\n"
                 "Current refreshed context:\n"
                 f"{context_text}"
             )

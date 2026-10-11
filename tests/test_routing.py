@@ -7,10 +7,15 @@ from unittest.mock import Mock, patch
 import requests
 
 from tools.routing import (
+    DEFAULT_ROAD_CLASSIFICATION,
     GEOCODING_URL,
     REQUEST_TIMEOUT,
     VALHALLA_ROUTE_URL,
+    VALHALLA_TRACE_ATTRIBUTES_URL,
+    build_route_segments,
+    classify_road,
     get_route,
+    merge_consecutive_segments,
 )
 
 
@@ -92,6 +97,7 @@ class TestGetRoute(unittest.TestCase):
                 "uses_highway": True,
                 "has_toll": False,
                 "has_ferry": False,
+                "segments": [],
             },
         )
 
@@ -279,6 +285,221 @@ class TestGetRoute(unittest.TestCase):
         self.assertEqual(route["destination"]["name"], "Tunis")
         self.assertGreater(route["distance_km"], 0)
         self.assertGreater(route["duration_minutes"], 0)
+        self.assertTrue(route["segments"])
+        self.assertIn(
+            "highway",
+            {segment["type"] for segment in route["segments"]},
+        )
+        self.assertAlmostEqual(
+            sum(segment["distance_km"] for segment in route["segments"]),
+            route["distance_km"],
+            delta=1.0,
+        )
+
+
+class TestRouteSegmentation(unittest.TestCase):
+    """Verify deterministic road classification and segment merging."""
+
+    def test_classifies_urban_edge(self) -> None:
+        self.assertEqual(
+            classify_road("residential", 50, 45),
+            "urban",
+        )
+
+    def test_classifies_suburban_edge(self) -> None:
+        self.assertEqual(
+            classify_road("primary", 70, 65),
+            "suburban",
+        )
+
+    def test_classifies_highway_by_class_or_speed(self) -> None:
+        self.assertEqual(classify_road("motorway", 70, 70), "highway")
+        self.assertEqual(classify_road("primary", 100, 90), "highway")
+
+    def test_missing_speed_values_are_safe(self) -> None:
+        self.assertEqual(classify_road("residential", None, None), "urban")
+        self.assertEqual(classify_road("primary", None, None), "suburban")
+        self.assertEqual(classify_road("motorway", None, None), "highway")
+        self.assertEqual(classify_road(None, None, None), "suburban")
+
+    def test_merges_consecutive_segments(self) -> None:
+        merged = merge_consecutive_segments(
+            [
+                {"distance_km": 3, "type": "urban"},
+                {"distance_km": 5, "type": "suburban"},
+                {"distance_km": 120, "type": "highway"},
+                {"distance_km": 80, "type": "highway"},
+                {"distance_km": 10, "type": "urban"},
+            ]
+        )
+
+        self.assertEqual(
+            [(segment["type"], segment["distance_km"]) for segment in merged],
+            [
+                ("urban", 3.0),
+                ("suburban", 5.0),
+                ("highway", 200.0),
+                ("urban", 10.0),
+            ],
+        )
+
+    def test_builds_mixed_urban_highway_route(self) -> None:
+        segments = build_route_segments(
+            [
+                {
+                    "distance_km": 4,
+                    "road_class": "residential",
+                    "speed_limit_kmh": 50,
+                    "routing_speed_kmh": 45,
+                    "road_name": "Urban Road",
+                    "use": "road",
+                },
+                {
+                    "distance_km": 100,
+                    "road_class": "motorway",
+                    "speed_limit_kmh": 110,
+                    "routing_speed_kmh": 100,
+                    "road_name": "A1",
+                    "use": "road",
+                },
+            ]
+        )
+
+        self.assertEqual([item["type"] for item in segments], ["urban", "highway"])
+        self.assertEqual(segments[0]["average_speed_kmh"], 45.0)
+        self.assertEqual(segments[1]["road_names"], ["A1"])
+
+    @patch("tools.routing.requests.post")
+    @patch("tools.routing.requests.get")
+    def test_get_route_adds_segments_from_trace_attributes(
+        self,
+        mock_get: Mock,
+        mock_post: Mock,
+    ) -> None:
+        mock_get.side_effect = [
+            _json_response(
+                {
+                    "results": [
+                        {
+                            "name": "Sfax",
+                            "country": "Tunisia",
+                            "latitude": 34.7406,
+                            "longitude": 10.7603,
+                        }
+                    ]
+                }
+            ),
+            _json_response(
+                {
+                    "results": [
+                        {
+                            "name": "Tunis",
+                            "country": "Tunisia",
+                            "latitude": 36.8065,
+                            "longitude": 10.1815,
+                        }
+                    ]
+                }
+            ),
+        ]
+        route_response = _json_response(
+            {
+                "trip": {
+                    "summary": {
+                        "length": 218,
+                        "time": 9_000,
+                        "has_highway": True,
+                        "has_toll": True,
+                        "has_ferry": False,
+                    },
+                    "legs": [{"shape": "encoded-route-shape"}],
+                }
+            }
+        )
+        trace_response = _json_response(
+            {
+                "edges": [
+                    {
+                        "length": 3,
+                        "road_class": "residential",
+                        "use": "road",
+                        "speed_limit": 50,
+                        "speed": 45,
+                        "names": ["Sfax Street"],
+                    },
+                    {
+                        "length": 5,
+                        "road_class": "primary",
+                        "use": "road",
+                        "speed_limit": 70,
+                        "speed": 65,
+                        "names": ["Regional Road"],
+                    },
+                    {
+                        "length": 120,
+                        "road_class": "motorway",
+                        "use": "road",
+                        "speed_limit": 110,
+                        "speed": 100,
+                        "names": ["A1"],
+                    },
+                    {
+                        "length": 80,
+                        "road_class": "trunk",
+                        "use": "road",
+                        "speed_limit": 110,
+                        "speed": 110,
+                        "names": ["A1"],
+                    },
+                    {
+                        "length": 10,
+                        "road_class": "residential",
+                        "use": "road",
+                        "speed": 50,
+                        "names": ["Tunis Street"],
+                    },
+                ]
+            }
+        )
+        mock_post.side_effect = [route_response, trace_response]
+
+        result = get_route("Sfax", "Tunis")
+
+        self.assertEqual(
+            [
+                (segment["type"], segment["distance_km"])
+                for segment in result["segments"]
+            ],
+            [
+                ("urban", 3.0),
+                ("suburban", 5.0),
+                ("highway", 200.0),
+                ("urban", 10.0),
+            ],
+        )
+        self.assertEqual(result["segments"][2]["average_speed_kmh"], 104.0)
+        self.assertEqual(result["segments"][2]["road_names"], ["A1"])
+        self.assertEqual(mock_post.call_count, 2)
+
+        trace_call = mock_post.call_args_list[1]
+        self.assertEqual(trace_call.args[0], VALHALLA_TRACE_ATTRIBUTES_URL)
+        self.assertEqual(
+            trace_call.kwargs["json"]["encoded_polyline"],
+            "encoded-route-shape",
+        )
+        self.assertEqual(trace_call.kwargs["json"]["shape_match"], "edge_walk")
+        self.assertIn(
+            "edge.speed_limit",
+            trace_call.kwargs["json"]["filters"]["attributes"],
+        )
+
+    def test_thresholds_are_configurable(self) -> None:
+        custom = type(DEFAULT_ROAD_CLASSIFICATION)(
+            urban_max_speed_kmh=40,
+            highway_min_speed_kmh=80,
+        )
+        self.assertEqual(classify_road("primary", 50, 50, custom), "suburban")
+        self.assertEqual(classify_road("primary", 80, 80, custom), "highway")
 
 
 if __name__ == "__main__":

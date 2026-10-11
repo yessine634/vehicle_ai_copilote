@@ -558,9 +558,8 @@ class SumoTrafficSimulator:
 
                 actual_consumption = consumed_kwh / distance_km * 100.0
 
-                consumption_for_range = actual_consumption
-
-                range_source = "observed_consumption"
+                # Preserve the raw observation as telemetry. Route feasibility
+                # uses the deterministic segment-aware baseline model.
 
             estimated_range = (
 

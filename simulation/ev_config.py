@@ -35,7 +35,7 @@ MIN_DISTANCE_FOR_OBSERVED_RANGE_KM = 1.0
 
 # These parameters are engineering defaults for the SUMO energy calculation,
 # not verified Hyundai specifications. They remain explicit so they can be
-# calibrated later instead of being mistaken for manufacturer values.
+# validated later instead of being mistaken for manufacturer values.
 SUMO_EV_MODEL_APPROXIMATIONS = {
     "accel_mps2": 2.6,
     "decel_mps2": 4.5,

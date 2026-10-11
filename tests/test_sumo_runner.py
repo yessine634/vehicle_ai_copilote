@@ -121,9 +121,7 @@ class SumoTrafficSimulatorTests(unittest.TestCase):
             self.assertIsNone(state["ev"]["charging_station_id"])
             self.assertFalse(state["ev"]["is_charging"])
             self.assertGreaterEqual(state["ev"]["distance_travelled_km"], 1.0)
-            self.assertEqual(
-                state["ev"]["range_estimate_source"], "observed_consumption"
-            )
+            self.assertEqual(state["ev"]["range_estimate_source"], "reference")
             self.assertEqual(traffic["traffic_level"], "normal")
             self.assertGreaterEqual(traffic["active_vehicles"], 1)
             self.assertIsInstance(traffic["average_speed_kph"], float)

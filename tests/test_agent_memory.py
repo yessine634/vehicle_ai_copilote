@@ -15,7 +15,7 @@ from agent.nodes import (
     prepare_selected_tool_calls,
 )
 from agent.prompts import SYSTEM_PROMPT
-from agent.tools import build_tools
+from agent.tools import build_tools, create_route_tool
 from tests.test_vehicle import SIMULATOR_STATE
 
 
@@ -68,6 +68,36 @@ class MutableFakeTripSimulator:
 
 
 class AgentMemoryTests(unittest.TestCase):
+    @patch("agent.tools.get_route")
+    def test_bound_route_tool_adds_deterministic_ev_estimate(
+        self,
+        mock_route: Mock,
+    ) -> None:
+        mock_route.return_value = {
+            "origin": {"name": "Sfax"},
+            "destination": {"name": "Tunis"},
+            "distance_km": 110.0,
+            "duration_minutes": 80.0,
+            "uses_highway": True,
+            "has_toll": True,
+            "has_ferry": False,
+            "segments": [
+                {"type": "urban", "distance_km": 10.0},
+                {"type": "highway", "distance_km": 100.0},
+            ],
+        }
+
+        result = create_route_tool(FakeTripSimulator()).invoke(
+            {"origin": "Sfax", "destination": "Tunis"}
+        )
+
+        self.assertEqual(result["ev_estimate"]["method"], "route_aware_baseline")
+        self.assertAlmostEqual(
+            result["ev_estimate"]["route"]["required_energy_kwh"],
+            22.5,
+        )
+        self.assertIn("can_reach_with_reserve", result["ev_estimate"]["feasibility"])
+
     def test_final_answer_node_forbids_tool_calls(self) -> None:
         fake_llm = Mock()
         fake_llm.invoke.return_value = AIMessage(content="Final answer.")
@@ -106,6 +136,7 @@ class AgentMemoryTests(unittest.TestCase):
 
         sent_messages = fake_llm.invoke.call_args.args[0]
         self.assertIn("Do not call tools", sent_messages[0].content)
+        self.assertIn("Do not independently recalculate", sent_messages[0].content)
         self.assertEqual(result["answer"], "Final answer.")
 
     def test_final_answer_node_rejects_late_tool_calls(self) -> None:
@@ -431,6 +462,9 @@ class AgentMemoryTests(unittest.TestCase):
         self.assertIn("do not call a tool", SYSTEM_PROMPT.lower())
         self.assertIn("all required tools in the same response", SYSTEM_PROMPT.lower())
         self.assertIn("current battery and current weather", SYSTEM_PROMPT.lower())
+        self.assertIn("do not independently recalculate", SYSTEM_PROMPT.lower())
+        self.assertIn('"tunisia" as a destination', SYSTEM_PROMPT.lower())
+        self.assertIn('destination "tunis"', SYSTEM_PROMPT.lower())
 
     def test_graph_enables_parallel_tool_calls(self) -> None:
         fake_llm = Mock()

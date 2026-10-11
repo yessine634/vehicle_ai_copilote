@@ -39,3 +39,6 @@ chroma_db/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# External ML datasets
+eved-dataset/
