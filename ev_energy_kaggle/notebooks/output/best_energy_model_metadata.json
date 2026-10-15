@@ -1,0 +1,33 @@
+{
+  "model_name": "LinearRegression",
+  "target": "Energy_Consumption_kWh",
+  "selected_candidate": "Speed_kmh | inertial_force_proxy_N | rolling_force_assumed_N",
+  "selected_features": [
+    "Battery_State_%",
+    "Battery_Voltage_V",
+    "Battery_Temperature_C",
+    "Temperature_C",
+    "Humidity_%",
+    "Wind_Speed_ms",
+    "Tire_Pressure_psi",
+    "Distance_Travelled_km",
+    "slope_force_proxy_N",
+    "Speed_kmh",
+    "inertial_force_proxy_N",
+    "rolling_force_assumed_N"
+  ],
+  "correlation_threshold": 0.9,
+  "cv_folds": 5,
+  "cv_mae_kwh": 0.4183381937145163,
+  "cv_rmse_kwh": 0.5226322432522408,
+  "cv_r2": 0.9423761388144334,
+  "test_mae_kwh": 0.409559530422922,
+  "test_rmse_kwh": 0.5141542457318399,
+  "test_r2": 0.945485525310141,
+  "feature_engineering_assumptions": {
+    "air_density_kg_m3": 1.225,
+    "cda_m2": 0.65,
+    "rolling_resistance_coefficient": 0.012,
+    "gravity_m_s2": 9.81
+  }
+}

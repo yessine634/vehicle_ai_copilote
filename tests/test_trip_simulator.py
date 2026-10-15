@@ -26,7 +26,7 @@ class TestTripSimulator(unittest.TestCase):
             self.assertTrue(moving_state["movement"]["lane_id"])
             self.assertEqual(
                 moving_state["ev"]["model"],
-                "Hyundai IONIQ 5 Long Range RWD",
+                "BMW i3 120 Ah",
             )
             self.assertGreaterEqual(moving_state["ev"]["battery_soc_percent"], 0)
             self.assertLessEqual(moving_state["ev"]["battery_soc_percent"], 100)

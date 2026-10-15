@@ -47,26 +47,26 @@ class SumoTrafficSimulatorTests(unittest.TestCase):
 
         self.assertFalse(simulator.is_running)
 
-    def test_ioniq5_route_definition_enables_84_kwh_battery(self) -> None:
+    def test_bmw_i3_route_definition_enables_42_2_kwh_battery(self) -> None:
         route_file = Path(SCENARIO_DIRECTORY) / "sfax_ego.rou.xml"
         root = ET.parse(route_file).getroot()
         vehicle_type = root.find("vType")
         vehicle = root.find("vehicle")
 
         self.assertIsNotNone(vehicle_type)
-        self.assertEqual(vehicle_type.get("id"), "ioniq5_long_range_rwd")
+        self.assertEqual(vehicle_type.get("id"), "bmw_i3_120ah")
         self.assertEqual(vehicle_type.get("emissionClass"), "Energy/unknown")
-        self.assertAlmostEqual(float(vehicle_type.get("maxSpeed")), 51.39)
+        self.assertAlmostEqual(float(vehicle_type.get("maxSpeed")), 41.67)
         parameters = {
             item.get("key"): item.get("value")
             for item in vehicle_type.findall("param")
         }
         self.assertEqual(parameters["has.battery.device"], "true")
-        self.assertEqual(float(parameters["device.battery.capacity"]), 84_000)
-        self.assertEqual(float(parameters["maximumPower"]), 168_000)
-        self.assertEqual(vehicle.get("type"), "ioniq5_long_range_rwd")
+        self.assertEqual(float(parameters["device.battery.capacity"]), 42_200)
+        self.assertEqual(float(parameters["maximumPower"]), 125_000)
+        self.assertEqual(vehicle.get("type"), "bmw_i3_120ah")
 
-    def test_sfax_ioniq5_exposes_live_energy_and_configurable_soc(self) -> None:
+    def test_sfax_bmw_i3_exposes_live_energy_and_configurable_soc(self) -> None:
         simulator = SumoTrafficSimulator(
             SFAX_CONFIGS["normal"],
             traffic_level="normal",
@@ -100,8 +100,8 @@ class SumoTrafficSimulatorTests(unittest.TestCase):
             self.assertTrue(state["motion"]["lane_id"])
             self.assertIn("position_geo", state["motion"])
             self.assertIn("ev", state)
-            self.assertEqual(state["ev"]["model"], "Hyundai IONIQ 5 Long Range RWD")
-            self.assertEqual(state["ev"]["battery_capacity_kwh"], 84.0)
+            self.assertEqual(state["ev"]["model"], "BMW i3 120 Ah")
+            self.assertEqual(state["ev"]["battery_capacity_kwh"], 42.2)
             self.assertAlmostEqual(
                 initial_state["ev"]["battery_soc_percent"], 55.0, places=5
             )

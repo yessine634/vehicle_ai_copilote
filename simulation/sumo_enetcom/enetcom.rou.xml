@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <routes>
-    <!-- Hyundai IONIQ 5 Long Range RWD ego vehicle. -->
-    <vType id="ioniq5_long_range_rwd" vClass="passenger"
-           accel="2.6" decel="4.5" sigma="0.2" length="5.0"
-           minGap="2.5" maxSpeed="51.39" color="green"
-           guiShape="passenger" mass="1830" emissionClass="Energy/unknown">
+    <!-- BMW i3 120 Ah electric ego vehicle. -->
+    <vType id="bmw_i3_120ah" vClass="passenger"
+           accel="2.6" decel="4.5" sigma="0.2" length="4.011"
+           minGap="2.5" maxSpeed="41.67" color="blue"
+           guiShape="passenger" mass="1270" emissionClass="Energy/unknown">
         <param key="has.battery.device" value="true"/>
-        <param key="device.battery.capacity" value="84000"/>
-        <param key="maximumPower" value="168000"/>
-        <param key="frontSurfaceArea" value="2.6"/>
-        <param key="airDragCoefficient" value="0.35"/>
+        <param key="device.battery.capacity" value="42200"/>
+        <param key="maximumPower" value="125000"/>
+        <param key="frontSurfaceArea" value="2.38"/>
+        <param key="airDragCoefficient" value="0.29"/>
         <param key="rotatingMass" value="40"/>
         <param key="radialDragCoefficient" value="0.1"/>
         <param key="rollDragCoefficient" value="0.01"/>
@@ -33,9 +33,9 @@
           departLane="best" departSpeed="max"/>
 
     <!-- Depart behind a few background vehicles so congestion is visible. -->
-    <vehicle id="ego_vehicle" type="ioniq5_long_range_rwd"
+    <vehicle id="ego_vehicle" type="bmw_i3_120ah"
              route="ain_to_enetcom" depart="5" departLane="best"
              departSpeed="0">
-        <param key="device.battery.chargeLevel" value="67200"/>
+        <param key="device.battery.chargeLevel" value="33760"/>
     </vehicle>
 </routes>

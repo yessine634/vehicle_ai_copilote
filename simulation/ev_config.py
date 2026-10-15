@@ -19,30 +19,30 @@ class EVConfig:
     reference_range_km: float
 
 
-IONIQ5_LONG_RANGE_RWD = EVConfig(
-    model_name="Hyundai IONIQ 5 Long Range RWD",
+BMW_I3_120_AH = EVConfig(
+    model_name="BMW i3 120 Ah",
     drive="RWD",
-    battery_capacity_kwh=84.0,
-    max_motor_power_kw=168.0,
-    max_motor_torque_nm=350.0,
-    max_speed_kmh=185.0,
-    reference_consumption_kwh_100km=16.0,
-    reference_range_km=570.0,
+    battery_capacity_kwh=42.2,
+    max_motor_power_kw=125.0,
+    max_motor_torque_nm=250.0,
+    max_speed_kmh=150.0,
+    reference_consumption_kwh_100km=13.1,
+    reference_range_km=310.0,
 )
 
 DEFAULT_INITIAL_SOC_PERCENT = 80.0
 MIN_DISTANCE_FOR_OBSERVED_RANGE_KM = 1.0
 
 # These parameters are engineering defaults for the SUMO energy calculation,
-# not verified Hyundai specifications. They remain explicit so they can be
+# not verified BMW specifications. They remain explicit so they can be
 # validated later instead of being mistaken for manufacturer values.
 SUMO_EV_MODEL_APPROXIMATIONS = {
     "accel_mps2": 2.6,
     "decel_mps2": 4.5,
-    "vehicle_length_m": 5.0,
-    "mass_kg": 1830.0,
-    "front_surface_area_m2": 2.6,
-    "air_drag_coefficient": 0.35,
+    "vehicle_length_m": 4.011,
+    "mass_kg": 1270.0,
+    "front_surface_area_m2": 2.38,
+    "air_drag_coefficient": 0.29,
     "rotating_mass_kg": 40.0,
     "radial_drag_coefficient": 0.1,
     "roll_drag_coefficient": 0.01,
