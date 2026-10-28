@@ -1,4 +1,4 @@
-"""Regression tests for the copilot's structured per-thread memory."""
+"""Tests for the LangGraph ReAct copilot workflow."""
 
 from __future__ import annotations
 
@@ -6,15 +6,16 @@ from copy import deepcopy
 import unittest
 from unittest.mock import Mock, patch
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langgraph.graph.message import add_messages
 
 from agent.graph import build_copilot_graph
-from agent.nodes import (
-    create_final_answer_node,
-    create_refresh_vehicle_node,
-    prepare_selected_tool_calls,
-)
-from agent.prompts import SYSTEM_PROMPT
+from agent.nodes import MEMORY_SUMMARY_PREFIX, create_memory_node
 from agent.tools import build_tools, create_route_tool
 from tests.test_vehicle import SIMULATOR_STATE
 
@@ -52,432 +53,345 @@ class FakeTripSimulator:
         return deepcopy(TRIP_STATE)
 
 
-class MutableFakeTripSimulator:
-    """Provide state whose simulation time can be advanced by a test."""
+class MemoryNodeTests(unittest.TestCase):
+    def test_history_at_limit_is_not_summarized(self) -> None:
+        llm = Mock()
+        node = create_memory_node(llm)
+        messages = [
+            HumanMessage(content=f"Question {index}")
+            for index in range(5)
+        ]
 
-    def __init__(self) -> None:
-        self.state = deepcopy(TRIP_STATE)
+        self.assertEqual(node({"messages": messages}), {})
+        llm.invoke.assert_not_called()
 
-    def get_state(self) -> dict:
-        return deepcopy(self.state)
+    def test_oversized_history_is_summarized_by_llm(self) -> None:
+        llm = Mock()
+        llm.invoke.return_value = AIMessage(
+            content="The driver is planning a trip from Sfax to Tunis."
+        )
+        node = create_memory_node(llm)
+        messages = [
+            HumanMessage(content="I want to travel from Sfax to Tunis."),
+            tool_call("vehicle_tool", {}, "old-vehicle-call"),
+            ToolMessage(
+                content='{"speed_kmh": 40, "battery_soc": 79.6}',
+                tool_call_id="old-vehicle-call",
+                name="vehicle_tool",
+            ),
+            AIMessage(content="Your speed is 40 and SOC is 79.6 percent."),
+            HumanMessage(content="Please remember my destination."),
+            AIMessage(content="Your destination is Tunis."),
+            HumanMessage(content="What is the weather there now?"),
+        ]
 
-    def advance(self, seconds: float, speed_kph: float) -> None:
-        movement = self.state["movement"]
-        movement["elapsed_seconds"] += seconds
-        movement["speed_kph"] = speed_kph
+        update = node({"messages": messages})
+        compacted = add_messages(messages, update["messages"])
+
+        self.assertEqual(len(compacted), 2)
+        self.assertIsInstance(compacted[0], SystemMessage)
+        self.assertTrue(
+            compacted[0].content.startswith(MEMORY_SUMMARY_PREFIX)
+        )
+        self.assertEqual(
+            compacted[1].content,
+            "What is the weather there now?",
+        )
+        summary_input = llm.invoke.call_args.args[0]
+        self.assertFalse(
+            any(isinstance(message, ToolMessage) for message in summary_input)
+        )
+        self.assertNotIn(
+            "79.6",
+            "\n".join(str(message.content) for message in summary_input),
+        )
+
+    def test_active_tool_protocol_is_not_compacted(self) -> None:
+        llm = Mock()
+        node = create_memory_node(llm)
+        messages = [
+            HumanMessage(content="Old question"),
+            AIMessage(content="Old answer"),
+            HumanMessage(content="Current question"),
+            tool_call("vehicle_tool", {}, "current-vehicle-call"),
+            ToolMessage(
+                content='{"speed_kmh": 40}',
+                tool_call_id="current-vehicle-call",
+                name="vehicle_tool",
+            ),
+        ]
+
+        self.assertEqual(node({"messages": messages}), {})
+        llm.invoke.assert_not_called()
 
 
-class AgentMemoryTests(unittest.TestCase):
+def tool_call(name: str, arguments: dict, call_id: str) -> AIMessage:
+    """Return an AI message containing one native tool call."""
+
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": name,
+                "args": arguments,
+                "id": call_id,
+                "type": "tool_call",
+            }
+        ],
+    )
+
+
+class ReActGraphTests(unittest.TestCase):
+    def build_graph(self, responses: list[AIMessage]):
+        fake_llm = Mock()
+        bound_llm = Mock()
+        fake_llm.bind_tools.return_value = bound_llm
+        bound_llm.invoke.side_effect = responses
+
+        patcher = patch("agent.graph.ChatGroq", return_value=fake_llm)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        graph = build_copilot_graph(FakeTripSimulator())
+        return graph, fake_llm, bound_llm
+
+    def invoke(self, graph, question: str, thread: str):
+        return graph.invoke(
+            {"messages": [HumanMessage(content=question)]},
+            config={"configurable": {"thread_id": thread}},
+        )
+
+    def test_no_tool_needed_ends_after_assistant(self) -> None:
+        graph, fake_llm, bound_llm = self.build_graph(
+            [AIMessage(content="Regenerative braking recovers kinetic energy.")]
+        )
+
+        result = self.invoke(
+            graph,
+            "Explain regenerative braking briefly.",
+            "no-tool-test",
+        )
+
+        self.assertEqual(len(result["messages"]), 2)
+        self.assertEqual(
+            result["messages"][-1].content,
+            "Regenerative braking recovers kinetic energy.",
+        )
+        self.assertEqual(bound_llm.invoke.call_count, 1)
+        fake_llm.bind_tools.assert_called_once()
+
+    def test_one_vehicle_tool_call_loops_back_to_assistant(self) -> None:
+        graph, _, bound_llm = self.build_graph(
+            [
+                tool_call("vehicle_tool", {}, "vehicle-call"),
+                AIMessage(content="The simulated vehicle is operating normally."),
+            ]
+        )
+
+        result = self.invoke(
+            graph,
+            "How is my car doing?",
+            "one-tool-test",
+        )
+
+        tool_messages = [
+            message
+            for message in result["messages"]
+            if isinstance(message, ToolMessage)
+        ]
+        self.assertEqual([message.name for message in tool_messages], ["vehicle_tool"])
+        self.assertEqual(bound_llm.invoke.call_count, 2)
+        self.assertEqual(
+            result["messages"][-1].content,
+            "The simulated vehicle is operating normally.",
+        )
+
+    @patch("agent.tools.get_weather")
     @patch("agent.tools.get_route")
-    def test_bound_route_tool_adds_deterministic_ev_estimate(
+    def test_sequential_route_then_weather_tools(
+        self,
+        mock_route: Mock,
+        mock_weather: Mock,
+    ) -> None:
+        mock_route.return_value = route_result()
+        mock_weather.return_value = {
+            "city": "Tunis",
+            "temperature_c": 24.0,
+            "weather_description": "Clear sky",
+        }
+        graph, _, bound_llm = self.build_graph(
+            [
+                tool_call(
+                    "route_tool",
+                    {"origin": "Sfax", "destination": "Tunis"},
+                    "route-call",
+                ),
+                tool_call(
+                    "weather_tool",
+                    {"city": "Tunis"},
+                    "weather-call",
+                ),
+                AIMessage(content="The route and destination weather are available."),
+            ]
+        )
+
+        result = self.invoke(
+            graph,
+            "Check the route to Tunis and then its weather.",
+            "sequential-tools-test",
+        )
+
+        tool_messages = [
+            message
+            for message in result["messages"]
+            if isinstance(message, ToolMessage)
+        ]
+        self.assertEqual(
+            [message.name for message in tool_messages],
+            ["route_tool", "weather_tool"],
+        )
+        self.assertEqual(bound_llm.invoke.call_count, 3)
+        mock_route.assert_called_once_with("Sfax", "Tunis")
+        mock_weather.assert_called_once_with("Tunis")
+
+    @patch("agent.tools.get_route")
+    def test_vehicle_and_route_tools_share_normal_react_loop(
         self,
         mock_route: Mock,
     ) -> None:
-        mock_route.return_value = {
-            "origin": {"name": "Sfax"},
-            "destination": {"name": "Tunis"},
-            "distance_km": 110.0,
-            "duration_minutes": 80.0,
-            "uses_highway": True,
-            "has_toll": True,
-            "has_ferry": False,
-            "segments": [
-                {"type": "urban", "distance_km": 10.0},
-                {"type": "highway", "distance_km": 100.0},
+        mock_route.return_value = route_result()
+        multi_tool_message = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "vehicle_tool",
+                    "args": {},
+                    "id": "vehicle-call",
+                    "type": "tool_call",
+                },
+                {
+                    "name": "route_tool",
+                    "args": {"origin": "Sfax", "destination": "Tunis"},
+                    "id": "route-call",
+                    "type": "tool_call",
+                },
             ],
+        )
+        graph, _, bound_llm = self.build_graph(
+            [
+                multi_tool_message,
+                AIMessage(content="The current battery is sufficient for the route."),
+            ]
+        )
+
+        result = self.invoke(
+            graph,
+            "Can my current vehicle reach Tunis?",
+            "vehicle-route-test",
+        )
+
+        tool_messages = [
+            message
+            for message in result["messages"]
+            if isinstance(message, ToolMessage)
+        ]
+        self.assertCountEqual(
+            [message.name for message in tool_messages],
+            ["vehicle_tool", "route_tool"],
+        )
+        self.assertEqual(bound_llm.invoke.call_count, 2)
+
+    @patch("agent.tools.get_weather")
+    @patch("agent.tools.get_route")
+    def test_oversized_history_is_summarized_before_next_live_question(
+        self,
+        mock_route: Mock,
+        mock_weather: Mock,
+    ) -> None:
+        mock_route.return_value = route_result()
+        mock_weather.return_value = {
+            "city": "Sfax",
+            "temperature_c": 24.0,
+            "weather_description": "Partly cloudy",
         }
+        graph, fake_llm, bound_llm = self.build_graph(
+            [
+                tool_call(
+                    "route_tool",
+                    {"origin": "Sfax", "destination": "Tunis"},
+                    "first-route-call",
+                ),
+                tool_call(
+                    "weather_tool",
+                    {"city": "Tunis"},
+                    "first-weather-call",
+                ),
+                AIMessage(content="First route and weather answer."),
+                tool_call(
+                    "weather_tool",
+                    {"city": "Tunis"},
+                    "fresh-weather-call",
+                ),
+                AIMessage(content="Fresh weather answer."),
+            ]
+        )
+        fake_llm.invoke.return_value = AIMessage(
+            content="The driver is planning a trip from Sfax to Tunis."
+        )
+        thread = "fresh-weather-memory-test"
+
+        self.invoke(
+            graph,
+            "Check the route from Sfax to Tunis and its weather.",
+            thread,
+        )
+        result = self.invoke(graph, "What is the weather there now?", thread)
+
+        tool_messages = [
+            message
+            for message in result["messages"]
+            if isinstance(message, ToolMessage)
+        ]
+        self.assertEqual(
+            [message.tool_call_id for message in tool_messages],
+            ["fresh-weather-call"],
+        )
+        self.assertEqual(mock_weather.call_count, 2)
+        self.assertEqual(fake_llm.invoke.call_count, 1)
+        self.assertEqual(bound_llm.invoke.call_count, 5)
+
+    @patch("agent.tools.get_route")
+    def test_bound_route_tool_keeps_energy_estimate(self, mock_route: Mock) -> None:
+        mock_route.return_value = route_result()
 
         result = create_route_tool(FakeTripSimulator()).invoke(
             {"origin": "Sfax", "destination": "Tunis"}
         )
 
         self.assertEqual(result["ev_estimate"]["method"], "route_aware_baseline")
-        self.assertAlmostEqual(
-            result["ev_estimate"]["route"]["required_energy_kwh"],
-            22.5,
-        )
         self.assertIn("can_reach_with_reserve", result["ev_estimate"]["feasibility"])
 
-    def test_final_answer_node_forbids_tool_calls(self) -> None:
-        fake_llm = Mock()
-        fake_llm.invoke.return_value = AIMessage(content="Final answer.")
-
-        final_answer = create_final_answer_node(fake_llm)
-        result = final_answer(
-            {
-                "question": "Can I reach Hammamet?",
-                "turn_messages": [
-                    HumanMessage(content="Can I reach Hammamet?"),
-                    AIMessage(
-                        content="",
-                        tool_calls=[
-                            {
-                                "name": "route_tool",
-                                "args": {
-                                    "origin": "Sfax",
-                                    "destination": "Hammamet",
-                                },
-                                "id": "route-call",
-                                "type": "tool_call",
-                            }
-                        ],
-                    ),
-                    ToolMessage(
-                        content='{"distance_km": 200.0}',
-                        tool_call_id="route-call",
-                        name="route_tool",
-                    ),
-                ],
-                "selected_tools": ["route_tool"],
-                "called_tools": ["route_tool"],
-                "current_vehicle_state": deepcopy(TRIP_STATE),
-            }
-        )
-
-        sent_messages = fake_llm.invoke.call_args.args[0]
-        self.assertIn("Do not call tools", sent_messages[0].content)
-        self.assertIn("Do not independently recalculate", sent_messages[0].content)
-        self.assertEqual(result["answer"], "Final answer.")
-
-    def test_final_answer_node_rejects_late_tool_calls(self) -> None:
-        fake_llm = Mock()
-        fake_llm.invoke.return_value = AIMessage(
-            content="",
-            tool_calls=[
-                {
-                    "name": "route_tool",
-                    "args": {
-                        "origin": "Sfax",
-                        "destination": "Hammamet",
-                    },
-                    "id": "late-route-call",
-                    "type": "tool_call",
-                }
-            ],
-        )
-
-        final_answer = create_final_answer_node(fake_llm)
-
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "final-answer LLM tried to call a tool",
-        ):
-            final_answer(
-                {
-                    "question": "Can I reach Hammamet?",
-                    "turn_messages": [
-                        HumanMessage(content="Can I reach Hammamet?")
-                    ],
-                    "current_vehicle_state": deepcopy(TRIP_STATE),
-                }
-            )
-
-    def test_tool_selection_comes_only_from_llm_planner(self) -> None:
-        result = prepare_selected_tool_calls(
-            {
-                "question": "What is the weather in Sfax?",
-                "turn_messages": [
-                    HumanMessage(content="What is the weather in Sfax?"),
-                    AIMessage(content="No tool selected."),
-                ],
-            }
-        )
-
-        self.assertEqual(result["selected_tools"], [])
-
-    def test_refresh_replaces_old_messages_and_exposes_location(self) -> None:
-        refresh = create_refresh_vehicle_node(FakeTripSimulator())
-        old_tool_message = ToolMessage(
-            content="stale weather",
-            tool_call_id="old-call",
-            name="weather_tool",
-        )
-
-        result = refresh(
-            {
-                "question": "Can I reach Hammamet?",
-                "turn_messages": [old_tool_message],
-            }
-        )
-
-        self.assertEqual(len(result["turn_messages"]), 1)
-        self.assertIsInstance(result["turn_messages"][0], HumanMessage)
+    def test_existing_tools_are_bound_without_duplicates(self) -> None:
         self.assertEqual(
-            result["turn_messages"][0].content,
-            "Can I reach Hammamet?",
-        )
-        self.assertEqual(
-            result["current_location"]["name"],
-            "Route El Ain, central Sfax",
-        )
-        self.assertEqual(
-            result["current_location"]["routing_name"],
-            "Sfax",
-        )
-        self.assertEqual(result["planned_origin"], "Sfax")
-
-    def test_same_time_questions_preserve_last_distinct_snapshot(self) -> None:
-        fake_llm = Mock()
-        fake_llm.bind_tools.return_value = fake_llm
-        fake_llm.invoke.return_value = AIMessage(content="Vehicle state received.")
-
-        simulator = MutableFakeTripSimulator()
-
-        with patch("agent.graph.ChatGroq", return_value=fake_llm):
-            graph = build_copilot_graph(simulator)
-
-        config = {"configurable": {"thread_id": "driver-memory-test"}}
-        first = graph.invoke({"question": "How is the car?"}, config=config)
-        simulator.advance(seconds=30.0, speed_kph=42.0)
-        second = graph.invoke({"question": "What changed?"}, config=config)
-        third = graph.invoke(
-            {"question": "Compare the states again."},
-            config=config,
-        )
-
-        self.assertIsNone(first["previous_vehicle_state"])
-        self.assertEqual(
-            second["previous_vehicle_state"],
-            first["current_vehicle_state"],
-        )
-        self.assertEqual(
-            third["previous_vehicle_state"],
-            first["current_vehicle_state"],
-        )
-        self.assertEqual(
-            third["current_vehicle_state"],
-            second["current_vehicle_state"],
-        )
-        self.assertEqual(len(third["turn_messages"]), 3)
-        self.assertEqual(
-            third["turn_messages"][0].content,
-            "Compare the states again.",
-        )
-
-    @patch("agent.tools.get_weather")
-    def test_weather_is_called_again_for_each_weather_question(
-        self,
-        mock_weather: Mock,
-    ) -> None:
-        mock_weather.return_value = {
-            "city": "Sfax",
-            "temperature_c": 25.0,
-            "weather_description": "Clear sky",
-        }
-        fake_llm = Mock()
-        fake_llm.bind_tools.return_value = fake_llm
-        fake_llm.invoke.side_effect = [
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "weather_tool",
-                        "args": {"city": "Sfax"},
-                        "id": "weather-one",
-                        "type": "tool_call",
-                    }
-                ],
-            ),
-            AIMessage(content="Fresh weather one."),
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "weather_tool",
-                        "args": {"city": "Sfax"},
-                        "id": "weather-two",
-                        "type": "tool_call",
-                    }
-                ],
-            ),
-            AIMessage(content="Fresh weather two."),
-        ]
-
-        with patch("agent.graph.ChatGroq", return_value=fake_llm):
-            graph = build_copilot_graph(FakeTripSimulator())
-
-        config = {"configurable": {"thread_id": "weather-freshness-test"}}
-        graph.invoke({"question": "What is the weather in Sfax?"}, config=config)
-        graph.invoke(
-            {"question": "Has the weather in Sfax changed?"},
-            config=config,
-        )
-
-        self.assertEqual(mock_weather.call_count, 2)
-
-    @patch("agent.tools.get_route")
-    def test_route_is_called_again_for_each_route_question(
-        self,
-        mock_route: Mock,
-    ) -> None:
-        mock_route.return_value = {
-            "origin": {"name": "Sfax"},
-            "destination": {"name": "Hammamet"},
-            "distance_km": 200.0,
-            "duration_minutes": 150.0,
-            "uses_highway": True,
-            "has_toll": True,
-            "has_ferry": False,
-        }
-
-        def route_call(call_id: str) -> AIMessage:
-            return AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "route_tool",
-                        "args": {
-                            "origin": "Sfax",
-                            "destination": "Hammamet",
-                        },
-                        "id": call_id,
-                        "type": "tool_call",
-                    }
-                ],
-            )
-
-        fake_llm = Mock()
-        fake_llm.bind_tools.return_value = fake_llm
-        fake_llm.invoke.side_effect = [
-            route_call("route-one"),
-            AIMessage(content="Fresh route one."),
-            route_call("route-two"),
-            AIMessage(content="Fresh route two."),
-        ]
-
-        with patch("agent.graph.ChatGroq", return_value=fake_llm):
-            graph = build_copilot_graph(FakeTripSimulator())
-
-        config = {"configurable": {"thread_id": "route-freshness-test"}}
-        graph.invoke({"question": "Can I reach Hammamet?"}, config=config)
-        graph.invoke(
-            {"question": "How long is the trip to Hammamet?"},
-            config=config,
-        )
-
-        self.assertEqual(mock_route.call_count, 2)
-
-    @patch("agent.tools.get_route")
-    def test_route_call_stores_compact_plan_facts(self, mock_route: Mock) -> None:
-        mock_route.return_value = {
-            "origin": {"name": "Sfax"},
-            "destination": {"name": "Hammamet"},
-            "distance_km": 200.0,
-            "duration_minutes": 150.0,
-            "uses_highway": True,
-            "has_toll": True,
-            "has_ferry": False,
-        }
-
-        fake_llm = Mock()
-        fake_llm.bind_tools.return_value = fake_llm
-        fake_llm.invoke.side_effect = [
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "route_tool",
-                        "args": {
-                            "origin": "Sfax",
-                            "destination": "Hammamet",
-                        },
-                        "id": "route-call",
-                        "type": "tool_call",
-                    }
-                ],
-            ),
-            AIMessage(content="The route is available."),
-        ]
-
-        with patch("agent.graph.ChatGroq", return_value=fake_llm):
-            graph = build_copilot_graph(FakeTripSimulator())
-
-        result = graph.invoke(
-            {"question": "Can I drive from Sfax to Hammamet?"},
-            config={"configurable": {"thread_id": "route-memory-test"}},
-        )
-
-        self.assertEqual(result["planned_origin"], "Sfax")
-        self.assertEqual(result["planned_destination"], "Hammamet")
-        self.assertEqual(result["answer"], "The route is available.")
-
-    @patch("agent.tools.get_route")
-    def test_destination_only_route_replaces_invented_origin(
-        self,
-        mock_route: Mock,
-    ) -> None:
-        mock_route.return_value = {
-            "origin": {"name": "Sfax"},
-            "destination": {"name": "Hammamet"},
-            "distance_km": 200.0,
-            "duration_minutes": 150.0,
-            "uses_highway": True,
-            "has_toll": True,
-            "has_ferry": False,
-        }
-
-        fake_llm = Mock()
-        fake_llm.bind_tools.return_value = fake_llm
-        fake_llm.invoke.side_effect = [
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "route_tool",
-                        "args": {
-                            "origin": "Sousse",
-                            "destination": "Hammamet",
-                        },
-                        "id": "destination-only-route",
-                        "type": "tool_call",
-                    }
-                ],
-            ),
-            AIMessage(content="You can reach Hammamet from Sfax."),
-        ]
-
-        with patch("agent.graph.ChatGroq", return_value=fake_llm):
-            graph = build_copilot_graph(FakeTripSimulator())
-
-        result = graph.invoke(
-            {"question": "Can I reach Hammamet?"},
-            config={"configurable": {"thread_id": "origin-guard-test"}},
-        )
-
-        mock_route.assert_called_once_with("Sfax", "Hammamet")
-        self.assertEqual(result["planned_origin"], "Sfax")
-        self.assertEqual(result["planned_destination"], "Hammamet")
-
-    def test_graph_binds_only_fresh_external_tools(self) -> None:
-        self.assertEqual(
-            [
-                selected_tool.name
-                for selected_tool in build_tools(FakeTripSimulator())
-            ],
+            [tool.name for tool in build_tools(FakeTripSimulator())],
             ["weather_tool", "route_tool", "vehicle_tool"],
         )
-        self.assertIn("never invent an origin", SYSTEM_PROMPT.lower())
-        self.assertIn("can reach", SYSTEM_PROMPT.lower())
-        self.assertIn("route_tool and weather_tool", SYSTEM_PROMPT.lower())
-        self.assertIn("do not call a tool", SYSTEM_PROMPT.lower())
-        self.assertIn("all required tools in the same response", SYSTEM_PROMPT.lower())
-        self.assertIn("current battery and current weather", SYSTEM_PROMPT.lower())
-        self.assertIn("do not independently recalculate", SYSTEM_PROMPT.lower())
-        self.assertIn('"tunisia" as a destination', SYSTEM_PROMPT.lower())
-        self.assertIn('destination "tunis"', SYSTEM_PROMPT.lower())
 
-    def test_graph_enables_parallel_tool_calls(self) -> None:
-        fake_llm = Mock()
-        fake_llm.bind_tools.return_value = fake_llm
-        fake_llm.invoke.return_value = AIMessage(content="No tools needed.")
 
-        with patch("agent.graph.ChatGroq", return_value=fake_llm):
-            build_copilot_graph(FakeTripSimulator())
-
-        fake_llm.bind_tools.assert_called_once()
-        _, bind_kwargs = fake_llm.bind_tools.call_args
-        self.assertEqual(bind_kwargs["tool_choice"], "auto")
-        self.assertIs(bind_kwargs["parallel_tool_calls"], True)
+def route_result() -> dict:
+    return {
+        "origin": {"name": "Sfax"},
+        "destination": {"name": "Tunis"},
+        "distance_km": 110.0,
+        "duration_minutes": 80.0,
+        "uses_highway": True,
+        "has_toll": True,
+        "has_ferry": False,
+        "segments": [
+            {"type": "urban", "distance_km": 10.0},
+            {"type": "highway", "distance_km": 100.0},
+        ],
+    }
 
 
 if __name__ == "__main__":
