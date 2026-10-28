@@ -6,8 +6,6 @@ from typing import Any
 
 from simulation.ev_config import DEFAULT_INITIAL_SOC_PERCENT
 from simulation.ev_health import EVHealthConfig, EVHealthSimulator
-
-
 Coordinate = tuple[float, float]
 
 
@@ -91,6 +89,13 @@ class TripSimulator:
             "uses_highway": False,
             "has_toll": False,
             "has_ferry": False,
+            "segments": [
+                {
+                    "type": "urban",
+                    "distance_km": SFAX_ROUTE_DISTANCE_KM,
+                    "average_speed_kmh": None,
+                }
+            ],
         }
         self.elapsed_seconds = 0.0
         self.travelled_distance_km = 0.0
@@ -227,6 +232,7 @@ class TripSimulator:
                 "uses_highway": False,
                 "has_toll": False,
                 "has_ferry": False,
+                "segments": [dict(item) for item in self.route_info["segments"]],
             },
             "movement": {
                 "speed_kph": round(float(speed_kph), 2),

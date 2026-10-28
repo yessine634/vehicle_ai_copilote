@@ -23,17 +23,17 @@ SIMULATOR_STATE = {
         "trip_progress_percent": 18.5,
     },
     "ev": {
-        "model": "Hyundai IONIQ 5 Long Range RWD",
+        "model": "BMW i3 120 Ah",
         "drive": "RWD",
-        "battery_capacity_kwh": 84.0,
-        "battery_energy_kwh": 66.8,
+        "battery_capacity_kwh": 42.2,
+        "battery_energy_kwh": 33.56,
         "battery_soc_percent": 79.52,
         "battery_low": False,
         "instant_consumption_wh_per_s": 3.6,
         "total_energy_consumed_kwh": 0.42,
         "total_energy_regenerated_kwh": 0.02,
-        "reference_consumption_kwh_100km": 16.0,
-        "reference_range_km": 570.0,
+        "reference_consumption_kwh_100km": 13.1,
+        "reference_range_km": 310.0,
         "distance_travelled_km": 1.42,
         "actual_consumption_kwh_100km": 29.58,
         "estimated_remaining_range_km": 225.83,
@@ -95,7 +95,7 @@ class VehicleToolTests(unittest.TestCase):
         self.assertIsInstance(state["motion"]["speed_kmh"], float)
         self.assertEqual(state["motion"]["current_road"], "Route El Ain")
         self.assertEqual(state["motion"]["road_id"], "729752355#3")
-        self.assertEqual(state["ev"]["battery_capacity_kwh"], 84.0)
+        self.assertEqual(state["ev"]["battery_capacity_kwh"], 42.2)
         self.assertGreaterEqual(state["ev"]["battery_soc_percent"], 0)
         self.assertLessEqual(state["ev"]["battery_soc_percent"], 100)
         self.assertGreaterEqual(state["ev"]["total_energy_consumed_kwh"], 0)
@@ -187,7 +187,7 @@ class VehicleToolTests(unittest.TestCase):
 
 
 class SumoVehicleToolIntegrationTests(unittest.TestCase):
-    def test_vehicle_tool_adapts_live_ioniq5_state(self) -> None:
+    def test_vehicle_tool_adapts_live_bmw_i3_state(self) -> None:
         from simulation.trip_simulator import TripSimulator
 
         simulator = TripSimulator(
@@ -202,9 +202,9 @@ class SumoVehicleToolIntegrationTests(unittest.TestCase):
             state = get_vehicle_state(simulator)
 
             self.assertEqual(
-                state["ev"]["model"], "Hyundai IONIQ 5 Long Range RWD"
+                state["ev"]["model"], "BMW i3 120 Ah"
             )
-            self.assertAlmostEqual(state["ev"]["battery_capacity_kwh"], 84.0)
+            self.assertAlmostEqual(state["ev"]["battery_capacity_kwh"], 42.2)
             self.assertGreater(state["motion"]["speed_kmh"], 0)
             self.assertGreaterEqual(state["ev"]["battery_soc_percent"], 0)
             self.assertLessEqual(state["ev"]["battery_soc_percent"], 100)

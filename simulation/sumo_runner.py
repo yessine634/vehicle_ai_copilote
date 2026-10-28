@@ -24,7 +24,7 @@ from simulation.ev_config import (
 
     DEFAULT_INITIAL_SOC_PERCENT,
 
-    IONIQ5_LONG_RANGE_RWD,
+    BMW_I3_120_AH,
 
     MIN_DISTANCE_FOR_OBSERVED_RANGE_KM,
 
@@ -544,7 +544,7 @@ class SumoTrafficSimulator:
 
             consumption_for_range = (
 
-                IONIQ5_LONG_RANGE_RWD.reference_consumption_kwh_100km
+                BMW_I3_120_AH.reference_consumption_kwh_100km
 
             )
 
@@ -558,9 +558,8 @@ class SumoTrafficSimulator:
 
                 actual_consumption = consumed_kwh / distance_km * 100.0
 
-                consumption_for_range = actual_consumption
-
-                range_source = "observed_consumption"
+                # Preserve the raw observation as telemetry. Route feasibility
+                # uses the deterministic segment-aware baseline model.
 
             estimated_range = (
 
@@ -594,9 +593,9 @@ class SumoTrafficSimulator:
 
             state["ev"] = {
 
-                "model": IONIQ5_LONG_RANGE_RWD.model_name,
+                "model": BMW_I3_120_AH.model_name,
 
-                "drive": IONIQ5_LONG_RANGE_RWD.drive,
+                "drive": BMW_I3_120_AH.drive,
 
                 "battery_capacity_kwh": capacity_kwh,
 
@@ -618,11 +617,11 @@ class SumoTrafficSimulator:
 
                 "reference_consumption_kwh_100km": (
 
-                    IONIQ5_LONG_RANGE_RWD.reference_consumption_kwh_100km
+                    BMW_I3_120_AH.reference_consumption_kwh_100km
 
                 ),
 
-                "reference_range_km": IONIQ5_LONG_RANGE_RWD.reference_range_km,
+                "reference_range_km": BMW_I3_120_AH.reference_range_km,
 
                 "distance_travelled_km": distance_km,
 

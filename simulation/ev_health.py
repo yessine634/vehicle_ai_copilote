@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from math import exp
 from typing import Any
 
-from simulation.ev_config import IONIQ5_LONG_RANGE_RWD
+from simulation.ev_config import BMW_I3_120_AH
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ class EVHealthSimulator:
         acceleration_mps2 = float(acceleration_mps2)
         power_kw = abs(float(instant_consumption_wh_per_s)) * 3.6
         power_load = min(
-            power_kw / IONIQ5_LONG_RANGE_RWD.max_motor_power_kw,
+            power_kw / BMW_I3_120_AH.max_motor_power_kw,
             1.0,
         )
         acceleration_load = min(abs(acceleration_mps2) / 4.5, 1.0)
@@ -127,7 +127,7 @@ class EVHealthSimulator:
         )
         throughput_kwh = consumed_delta + regenerated_delta
         equivalent_cycles = throughput_kwh / (
-            2.0 * IONIQ5_LONG_RANGE_RWD.battery_capacity_kwh
+            2.0 * BMW_I3_120_AH.battery_capacity_kwh
         )
         self.battery_soh_percent = max(
             0.0,

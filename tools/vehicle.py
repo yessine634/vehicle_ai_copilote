@@ -65,7 +65,10 @@ def _normalize_ev(ev: Mapping[str, Any]) -> dict[str, Any]:
         raise VehicleStateError("EV state is missing a valid 'model'.")
     if not isinstance(drive, str) or not drive:
         raise VehicleStateError("EV state is missing a valid 'drive'.")
-    if range_source not in {"reference", "observed_consumption"}:
+    if range_source not in {
+        "reference",
+        "observed_consumption",
+    }:
         raise VehicleStateError("EV state has an invalid range estimate source.")
 
     capacity = _required_number(ev, "battery_capacity_kwh", minimum=0.0)
@@ -84,7 +87,7 @@ def _normalize_ev(ev: Mapping[str, Any]) -> dict[str, Any]:
     ):
         raise VehicleStateError("EV charging_station_id must be text or None.")
 
-    return {
+    normalized = {
         "model": model,
         "drive": drive,
         "battery_capacity_kwh": capacity,
@@ -121,6 +124,7 @@ def _normalize_ev(ev: Mapping[str, Any]) -> dict[str, Any]:
         "charging_station_id": charging_station_id,
         "is_charging": bool(ev.get("is_charging", False)),
     }
+    return normalized
 
 
 def _normalize_health(health: Mapping[str, Any]) -> dict[str, Any]:
@@ -240,6 +244,28 @@ def _normalize_trip(raw_state: Mapping[str, Any]) -> dict[str, Any] | None:
             "has_toll": bool(route.get("has_toll", False)),
             "has_ferry": bool(route.get("has_ferry", False)),
         }
+        segments = route.get("segments")
+        if segments is not None:
+            if not isinstance(segments, list):
+                raise VehicleStateError("Vehicle trip route segments must be a list.")
+            normalized_segments = []
+            for segment in segments:
+                if not isinstance(segment, Mapping):
+                    raise VehicleStateError("Each route segment must be a mapping.")
+                segment_type = segment.get("type")
+                if not isinstance(segment_type, str) or not segment_type:
+                    raise VehicleStateError("Route segment type must be text.")
+                normalized_segment = {
+                    "type": segment_type,
+                    "distance_km": _required_number(
+                        segment, "distance_km", minimum=0.0
+                    ),
+                    "average_speed_kmh": _optional_number(
+                        segment, "average_speed_kmh"
+                    ),
+                }
+                normalized_segments.append(normalized_segment)
+            normalized["route"]["segments"] = normalized_segments
 
     return normalized
 

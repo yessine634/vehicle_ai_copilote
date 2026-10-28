@@ -178,17 +178,17 @@ FAKE_SIMULATOR_STATE = {
         "trip_progress_percent": 31.0,
     },
     "ev": {
-        "model": "Hyundai IONIQ 5 Long Range RWD",
+        "model": "BMW i3 120 Ah",
         "drive": "RWD",
         "battery_soc_percent": 72.0,
-        "battery_capacity_kwh": 84.0,
-        "battery_energy_kwh": 60.48,
+        "battery_capacity_kwh": 42.2,
+        "battery_energy_kwh": 30.384,
         "battery_low": False,
         "instant_consumption_wh_per_s": 4.2,
         "total_energy_consumed_kwh": 1.4,
         "total_energy_regenerated_kwh": 0.18,
-        "reference_consumption_kwh_100km": 16.0,
-        "reference_range_km": 570.0,
+        "reference_consumption_kwh_100km": 13.1,
+        "reference_range_km": 310.0,
         "distance_travelled_km": 4.8,
         "actual_consumption_kwh_100km": 29.17,
         "estimated_remaining_range_km": 207.37,
@@ -324,7 +324,7 @@ class AllToolsUnitTests(unittest.TestCase):
 
         self.assertEqual(result["motion"]["speed_kmh"], 58.0)
         self.assertEqual(result["ev"]["battery_soc_percent"], 72.0)
-        self.assertEqual(result["ev"]["battery_capacity_kwh"], 84.0)
+        self.assertEqual(result["ev"]["battery_capacity_kwh"], 42.2)
         self.assertEqual(
             result["health"]["source"], "supplemental_simulation"
         )
@@ -365,7 +365,7 @@ class AllToolsUnitTests(unittest.TestCase):
 class SumoBoundVehicleToolTests(unittest.TestCase):
     """Verify the LangChain vehicle tool reads the active SUMO session."""
 
-    def test_vehicle_tool_reads_live_sumo_ioniq5(self) -> None:
+    def test_vehicle_tool_reads_live_sumo_bmw_i3(self) -> None:
         from simulation.trip_simulator import TripSimulator
 
         simulator = TripSimulator(
@@ -383,9 +383,9 @@ class SumoBoundVehicleToolTests(unittest.TestCase):
 
             self.assertEqual(
                 result["ev"]["model"],
-                "Hyundai IONIQ 5 Long Range RWD",
+                "BMW i3 120 Ah",
             )
-            self.assertEqual(result["ev"]["battery_capacity_kwh"], 84.0)
+            self.assertEqual(result["ev"]["battery_capacity_kwh"], 42.2)
             self.assertGreater(result["motion"]["speed_kmh"], 0)
             self.assertEqual(
                 result["health"]["source"],

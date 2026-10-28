@@ -44,7 +44,7 @@ def run_sfax_trip_demo(
     initial_soc_percent: float = DEFAULT_INITIAL_SOC_PERCENT,
     ambient_temperature_c: float = 25.0,
 ) -> None:
-    """Print the live SUMO IONIQ 5 motion, EV-energy, and traffic state."""
+    """Print the live SUMO BMW i3 motion, EV-energy, and traffic state."""
 
     from simulation.trip_simulator import TripSimulator
 
