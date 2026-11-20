@@ -15,5 +15,7 @@ traci
 
 # Diagnostics, retrieval, and user interface
 scikit-learn
+pandas
+joblib
 chromadb
 streamlit

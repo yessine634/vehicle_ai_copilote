@@ -39,6 +39,81 @@ def get_weather_description(weather_code: int) -> str:
     return WMO_WEATHER_DESCRIPTIONS.get(weather_code, "Unknown weather condition")
 
 
+def _weather_for_coordinates(
+    latitude: float,
+    longitude: float,
+    *,
+    location_name: str | None = None,
+    country: str | None = None,
+) -> dict:
+    """Fetch current weather for already-resolved coordinates."""
+
+    try:
+        latitude = float(latitude)
+        longitude = float(longitude)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Weather coordinates must be numeric.") from exc
+    if not -90.0 <= latitude <= 90.0:
+        raise ValueError("Weather latitude must be between -90 and 90.")
+    if not -180.0 <= longitude <= 180.0:
+        raise ValueError("Weather longitude must be between -180 and 180.")
+
+    weather_url = "https://api.open-meteo.com/v1/forecast"
+    weather_params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "current": [
+            "temperature_2m",
+            "relative_humidity_2m",
+            "precipitation",
+            "rain",
+            "weather_code",
+            "wind_speed_10m",
+            "visibility",
+        ],
+    }
+    weather_response = requests.get(
+        weather_url,
+        params=weather_params,
+        timeout=10,
+    )
+    weather_response.raise_for_status()
+    current = weather_response.json()["current"]
+    weather_code = int(current["weather_code"])
+
+    result = {
+        "city": location_name or "Resolved coordinates",
+        "country": country,
+        "latitude": latitude,
+        "longitude": longitude,
+        "temperature_c": current["temperature_2m"],
+        "humidity_percent": current["relative_humidity_2m"],
+        "precipitation_mm": current["precipitation"],
+        "rain_mm": current["rain"],
+        "wind_speed_kmh": current["wind_speed_10m"],
+        "weather_code": weather_code,
+        "weather_description": get_weather_description(weather_code),
+    }
+    if current.get("visibility") is not None:
+        result["visibility_m"] = current["visibility"]
+    return result
+
+
+def get_weather_by_coordinates(
+    latitude: float,
+    longitude: float,
+    *,
+    location_name: str | None = None,
+) -> dict:
+    """Get current weather without performing a second geocoding lookup."""
+
+    return _weather_for_coordinates(
+        latitude,
+        longitude,
+        location_name=location_name,
+    )
+
+
 def get_weather(city: str) -> dict:
     """
     Get the current weather for a city using Open-Meteo.
@@ -82,54 +157,10 @@ def get_weather(city: str) -> dict:
     latitude = location["latitude"]
     longitude = location["longitude"]
 
-    # -------------------------
-    # 2. Weather
-    # -------------------------
-
-    weather_url = "https://api.open-meteo.com/v1/forecast"
-
-    weather_params = {
-        "latitude": latitude,
-        "longitude": longitude,
-        "current": [
-            "temperature_2m",
-            "relative_humidity_2m",
-            "precipitation",
-            "rain",
-            "weather_code",
-            "wind_speed_10m",
-        ],
-    }
-
-    weather_response = requests.get(
-        weather_url,
-        params=weather_params,
-        timeout=10,
+    return _weather_for_coordinates(
+        latitude,
+        longitude,
+        location_name=location["name"],
+        country=location.get("country"),
     )
-
-    weather_response.raise_for_status()
-
-    weather_data = weather_response.json()
-
-    current = weather_data["current"]
-
-    # -------------------------
-    # 3. Clean result
-    # -------------------------
-
-    weather_code = int(current["weather_code"])
-
-    return {
-        "city": location["name"],
-        "country": location.get("country"),
-        "latitude": latitude,
-        "longitude": longitude,
-        "temperature_c": current["temperature_2m"],
-        "humidity_percent": current["relative_humidity_2m"],
-        "precipitation_mm": current["precipitation"],
-        "rain_mm": current["rain"],
-        "wind_speed_kmh": current["wind_speed_10m"],
-        "weather_code": weather_code,
-        "weather_description": get_weather_description(weather_code),
-    }
 

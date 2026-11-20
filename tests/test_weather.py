@@ -4,7 +4,11 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
-from tools.weather import get_weather, get_weather_description
+from tools.weather import (
+    get_weather,
+    get_weather_by_coordinates,
+    get_weather_description,
+)
 
 
 class TestGetWeather(unittest.TestCase):
@@ -83,6 +87,41 @@ class TestGetWeather(unittest.TestCase):
             get_weather_description(999),
             "Unknown weather condition",
         )
+
+    @patch("tools.weather.requests.get")
+    def test_weather_by_coordinates_skips_geocoding(
+        self, mock_get: Mock
+    ) -> None:
+        weather_response = Mock()
+        weather_response.json.return_value = {
+            "current": {
+                "temperature_2m": 22.0,
+                "relative_humidity_2m": 60,
+                "precipitation": 0.0,
+                "rain": 0.0,
+                "wind_speed_10m": 9.0,
+                "weather_code": 2,
+                "visibility": 20_000.0,
+            }
+        }
+        mock_get.return_value = weather_response
+
+        result = get_weather_by_coordinates(
+            34.839620,
+            10.756662,
+            location_name="ENET'Com, Technopole de Sfax",
+        )
+
+        self.assertEqual(mock_get.call_count, 1)
+        call = mock_get.call_args
+        self.assertEqual(
+            call.args[0],
+            "https://api.open-meteo.com/v1/forecast",
+        )
+        self.assertEqual(call.kwargs["params"]["latitude"], 34.839620)
+        self.assertEqual(call.kwargs["params"]["longitude"], 10.756662)
+        self.assertEqual(result["city"], "ENET'Com, Technopole de Sfax")
+        self.assertEqual(result["temperature_c"], 22.0)
 
     @patch("tools.weather.requests.get")
     def test_get_weather_returns_error_when_city_is_not_found(

@@ -13,7 +13,7 @@ from agent.nodes import (
     extract_explicit_route_context,
     filter_messages_for_llm,
 )
-from agent.tools import build_tools, create_route_tool
+from agent.tools import build_tools, compact_route_result, create_route_tool
 from tests.test_vehicle import SIMULATOR_STATE
 
 
@@ -122,6 +122,55 @@ class MessageFilteringTests(unittest.TestCase):
         )
 
         self.assertNotIn(orphan, filtered)
+
+    def test_old_tool_payload_is_not_resent_on_a_new_turn(self) -> None:
+        old_request = tool_call(
+            "energy_consumption_kwh",
+            {"origin": "Sfax", "destination": "Tunis"},
+            "old-energy-call",
+        )
+        old_result = ToolMessage(
+            content='{"estimated_energy_consumption_kwh": 40}',
+            tool_call_id="old-energy-call",
+            name="energy_consumption_kwh",
+        )
+        latest_question = HumanMessage(content="Explain regenerative braking.")
+
+        filtered = filter_messages_for_llm(
+            [
+                HumanMessage(content="Can I reach Tunis?"),
+                old_request,
+                old_result,
+                AIMessage(content="The old estimate was available."),
+                latest_question,
+            ]
+        )
+
+        self.assertNotIn(old_request, filtered)
+        self.assertNotIn(old_result, filtered)
+        self.assertIn(latest_question, filtered)
+
+    def test_current_turn_tool_pair_is_preserved(self) -> None:
+        latest_question = HumanMessage(content="Recalculate my trip energy.")
+        current_request = tool_call(
+            "energy_consumption_kwh",
+            {},
+            "current-energy-call",
+        )
+        current_result = ToolMessage(
+            content='{"estimated_energy_consumption_kwh": 35}',
+            tool_call_id="current-energy-call",
+            name="energy_consumption_kwh",
+        )
+
+        filtered = filter_messages_for_llm(
+            [latest_question, current_request, current_result]
+        )
+
+        self.assertEqual(
+            filtered,
+            [latest_question, current_request, current_result],
+        )
 
 
 class RouteContextExtractionTests(unittest.TestCase):
@@ -275,21 +324,198 @@ class ReActGraphTests(unittest.TestCase):
         mock_weather.assert_called_once_with("Tunis")
 
     @patch("agent.tools.get_route")
-    def test_bound_route_tool_keeps_energy_estimate(self, mock_route: Mock) -> None:
+    def test_bound_route_tool_returns_compact_summary(self, mock_route: Mock) -> None:
         mock_route.return_value = route_result()
 
         result = create_route_tool(FakeTripSimulator()).invoke(
             {"origin": "Sfax", "destination": "Tunis"}
         )
 
-        self.assertEqual(result["ev_estimate"]["method"], "route_aware_baseline")
-        self.assertIn("can_reach_with_reserve", result["ev_estimate"]["feasibility"])
+        self.assertEqual(result["origin"], "Sfax")
+        self.assertEqual(result["destination"], "Tunis")
+        self.assertEqual(result["distance_km"], 110.0)
+        self.assertNotIn("segments", result)
+        self.assertNotIn("ev_estimate", result)
+        self.assertEqual(
+            result["road_type_summary"],
+            [
+                {"type": "urban", "distance_km": 10.0},
+                {"type": "highway", "distance_km": 100.0},
+            ],
+        )
+
+    def test_compact_route_aggregates_repeated_road_types(self) -> None:
+        detailed = route_result()
+        detailed["segments"] = [
+            {
+                "type": "urban",
+                "distance_km": 4.0,
+                "average_speed_kmh": 30.0,
+                "road_names": ["Local road"],
+            },
+            {
+                "type": "highway",
+                "distance_km": 100.0,
+                "average_speed_kmh": 100.0,
+                "road_names": ["A1"],
+            },
+            {
+                "type": "urban",
+                "distance_km": 6.0,
+                "average_speed_kmh": 50.0,
+                "road_names": ["Another local road"],
+            },
+        ]
+
+        result = compact_route_result(detailed)
+
+        self.assertEqual(
+            result["road_type_summary"],
+            [
+                {
+                    "type": "urban",
+                    "distance_km": 10.0,
+                    "average_speed_kmh": 42.0,
+                },
+                {
+                    "type": "highway",
+                    "distance_km": 100.0,
+                    "average_speed_kmh": 100.0,
+                },
+            ],
+        )
+        self.assertNotIn("road_names", str(result))
 
     def test_existing_tools_are_bound_without_duplicates(self) -> None:
+        tools = build_tools(FakeTripSimulator())
         self.assertEqual(
-            [tool.name for tool in build_tools(FakeTripSimulator())],
-            ["weather_tool", "route_tool", "vehicle_tool"],
+            [tool.name for tool in tools],
+            [
+                "weather_tool",
+                "route_tool",
+                "vehicle_tool",
+                "energy_consumption_kwh",
+            ],
         )
+        descriptions = {tool.name: tool.description for tool in tools}
+        self.assertIn(
+            "Do not call route_tool first",
+            descriptions["energy_consumption_kwh"],
+        )
+        self.assertIn("Use only for navigation", descriptions["route_tool"])
+        self.assertIn("prerequisite", descriptions["route_tool"])
+
+    @patch("agent.tools.build_energy_estimation_graph")
+    def test_energy_tool_uses_saved_context_in_existing_react_loop(
+        self,
+        mock_build_energy_graph: Mock,
+    ) -> None:
+        fake_energy_graph = Mock()
+        fake_energy_graph.invoke.return_value = {
+            "origin": "Sfax",
+            "destination": "Tunis",
+            "reserve_soc_percent": 15.0,
+            "route_segments": [],
+            "total_distance_km": 270.0,
+            "total_predicted_energy_kwh": 30.0,
+            "available_energy_kwh": 33.0,
+            "reserve_energy_kwh": 6.33,
+            "energy_available_after_reserve_kwh": 26.67,
+            "energy_after_trip_kwh": 3.0,
+            "projected_arrival_soc_percent": 7.1,
+            "feasible": False,
+            "warnings": ["mock estimate"],
+            "errors": [],
+        }
+        mock_build_energy_graph.return_value = fake_energy_graph
+        graph, _, bound_llm = self.build_graph(
+            [
+                tool_call(
+                    "energy_consumption_kwh",
+                    {},
+                    "energy-call",
+                ),
+                AIMessage(content="The fresh estimate is not sufficient."),
+            ]
+        )
+
+        result = self.invoke(
+            graph,
+            "Can my EV go from Sfax to Tunis?",
+            "energy-react-loop",
+        )
+
+        tool_messages = [
+            message
+            for message in result["messages"]
+            if isinstance(message, ToolMessage)
+        ]
+        self.assertEqual([item.name for item in tool_messages], [
+            "energy_consumption_kwh"
+        ])
+        self.assertEqual(bound_llm.invoke.call_count, 2)
+        calculation_input = fake_energy_graph.invoke.call_args.args[0]
+        self.assertEqual(calculation_input["origin"], "Sfax")
+        self.assertEqual(calculation_input["destination"], "Tunis")
+
+    @patch("agent.tools.build_energy_estimation_graph")
+    def test_energy_request_runs_subgraph_again_in_checkpointed_thread(
+        self,
+        mock_build_energy_graph: Mock,
+    ) -> None:
+        def calculation(available: float) -> dict:
+            return {
+                "origin": "Sfax",
+                "destination": "Tunis",
+                "reserve_soc_percent": 15.0,
+                "route_segments": [],
+                "total_distance_km": 270.0,
+                "total_predicted_energy_kwh": 30.0,
+                "available_energy_kwh": available,
+                "reserve_energy_kwh": 6.33,
+                "energy_available_after_reserve_kwh": available - 6.33,
+                "energy_after_trip_kwh": available - 30.0,
+                "projected_arrival_soc_percent": 0.0,
+                "feasible": available - 6.33 >= 30.0,
+                "warnings": [],
+                "errors": [],
+            }
+
+        fake_energy_graph = Mock()
+        fake_energy_graph.invoke.side_effect = [
+            calculation(35.0),
+            calculation(25.0),
+        ]
+        mock_build_energy_graph.return_value = fake_energy_graph
+        graph, _, _ = self.build_graph(
+            [
+                tool_call("energy_consumption_kwh", {}, "energy-1"),
+                AIMessage(content="First fresh estimate."),
+                tool_call("energy_consumption_kwh", {}, "energy-2"),
+                AIMessage(content="Second fresh estimate."),
+            ]
+        )
+        thread = "repeat-energy-request"
+
+        self.invoke(
+            graph,
+            "Estimate energy from Sfax to Tunis.",
+            thread,
+        )
+        result = self.invoke(
+            graph,
+            "Recalculate whether my battery is still sufficient.",
+            thread,
+        )
+
+        self.assertEqual(fake_energy_graph.invoke.call_count, 2)
+        energy_results = [
+            message
+            for message in result["messages"]
+            if isinstance(message, ToolMessage)
+            and message.name == "energy_consumption_kwh"
+        ]
+        self.assertEqual(len(energy_results), 2)
 
 
 def route_result() -> dict:

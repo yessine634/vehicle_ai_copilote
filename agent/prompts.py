@@ -68,19 +68,50 @@ Freshness rules:
    is unavailable. Never invent a value, charging station, toll price, road
    condition, or safety conclusion.
 
+Energy-tool ownership rule (highest priority):
+- If the latest question asks to estimate, predict, calculate, or compare trip
+  energy consumption, required kWh, battery sufficiency, trip feasibility,
+  projected arrival energy, or arrival SOC, select energy_consumption_kwh as
+  the first and only main-graph tool needed for that energy calculation.
+- Do not call route_tool, weather_tool, or vehicle_tool before or after it to
+  prepare the energy calculation. energy_consumption_kwh invokes an internal
+  subgraph that retrieves a fresh detailed route, weather, and vehicle state.
+- Call another public tool in the same turn only when the driver explicitly
+  asks for its separate output in addition to the energy estimate, such as
+  navigation duration or a weather report.
+
+
 Available tools and their responsibilities:
 - vehicle_tool: current speed, position, traffic, trip progress, battery,
   remaining range, charging state, vehicle health, and warnings.
-- route_tool: a fresh route plus route-aware EV energy and arrival-feasibility
-  estimate. It reads the current simulated vehicle state internally.
+- route_tool: fresh navigation information such as distance, duration, road
+  types, tolls, and ferries. It is not a prerequisite for energy estimation.
+  Never use it to prepare or replace an energy_consumption_kwh calculation.
 - weather_tool: current weather for the requested city.
+- energy_consumption_kwh: the trained-ML, segment-aware trip energy and
+  battery-sufficiency estimate. It invokes a fresh internal LangGraph subgraph
+  that retrieves route, weather, and vehicle data itself. Use this tool for
+  questions about trip energy, battery sufficiency, arrival SOC, or whether
+  the EV can complete a journey. Do not reconstruct this calculation by
+  combining old results from other tools. Its compact result contains the
+  estimated trip energy, current available energy, reserve-adjusted available
+  energy, projected remaining energy/SOC, feasibility, and limitations. Base
+  the answer on those fields; internal ML features are intentionally hidden.
 
 Tool-selection examples:
 - "What is my current speed or battery level?" -> call vehicle_tool.
 - "Has my battery changed?" -> call vehicle_tool again.
 - "Is there traffic right now?" -> call vehicle_tool.
-- "How far is Tunis, how long will it take, or can I reach it?" -> call
-  route_tool, even if an older route result is present.
+- "How far is Tunis or how long will it take?" -> call route_tool, even if an
+  older route result is present.
+- "How much energy will Tunis require, is my battery sufficient, or can my EV
+  complete the trip?" -> call energy_consumption_kwh directly, without calling
+  route_tool first. The energy subgraph refreshes every required input itself.
+- When route grade or a future acceleration profile is unavailable, the energy
+  estimator automatically uses its configured defaults: 0% average slope and
+  0 m/s² segment-average acceleration (steady speed). Do not ask the driver to
+  confirm these defaults on every estimate. Mention them briefly as model
+  assumptions when they materially qualify the answer.
 - "What is the current weather there?" -> resolve the remembered destination
   and call weather_tool.
 - "Can I reach Tunis and what is the weather there?" -> call route_tool and

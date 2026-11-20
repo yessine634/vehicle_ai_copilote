@@ -17,6 +17,8 @@ class EVConfig:
     max_speed_kmh: float
     reference_consumption_kwh_100km: float
     reference_range_km: float
+    nominal_battery_voltage_v: float
+    vehicle_mass_kg: float
 
 
 BMW_I3_120_AH = EVConfig(
@@ -28,6 +30,9 @@ BMW_I3_120_AH = EVConfig(
     max_speed_kmh=150.0,
     reference_consumption_kwh_100km=13.1,
     reference_range_km=310.0,
+    # BMW Group technical specifications for the i3 120 Ah.
+    nominal_battery_voltage_v=352.0,
+    vehicle_mass_kg=1270.0,
 )
 
 DEFAULT_INITIAL_SOC_PERCENT = 80.0

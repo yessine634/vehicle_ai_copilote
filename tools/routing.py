@@ -1,7 +1,7 @@
 """Routing tool for the Agentic AI Vehicle Copilot.
 
 This module:
-1. Geocodes origin and destination names with Open-Meteo.
+1. Resolves origin and destination names with validated OSM/Nominatim search.
 2. Requests a car route from the public Valhalla demo server.
 3. Uses Valhalla trace attributes to classify route sections.
 4. Returns only the routing information useful to the AI agent.
@@ -14,14 +14,15 @@ from typing import Any
 
 import requests
 
+from location.resolver import LocationResolver, ResolvedLocation
 
-GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 VALHALLA_ROUTE_URL = "https://valhalla1.openstreetmap.de/route"
 VALHALLA_TRACE_ATTRIBUTES_URL = (
     "https://valhalla1.openstreetmap.de/trace_attributes"
 )
 
 REQUEST_TIMEOUT = 20
+DEFAULT_LOCATION_RESOLVER = LocationResolver(timeout=REQUEST_TIMEOUT)
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,8 @@ def merge_consecutive_segments(
     merged: list[dict[str, Any]] = []
     speed_weights: list[float] = []
     weighted_speeds: list[float] = []
+    posted_limits: list[list[float]] = []
+    merge_keys: list[tuple[str, float | None, str]] = []
 
     for edge in edges:
         edge_type = edge.get("type")
@@ -113,13 +116,24 @@ def merge_consecutive_segments(
         speed = _optional_positive_float(
             edge.get("routing_speed_kmh", edge.get("average_speed_kmh"))
         )
+        posted_limit = _optional_positive_float(
+            edge.get("speed_limit_kmh")
+        )
+        edge_use = str(edge.get("use") or "").strip().casefold()
+        special_use = (
+            edge_use
+            if edge_use in {"ramp", "turn_channel", "egress_connection"}
+            else "ordinary"
+        )
+        merge_key = (edge_type, posted_limit, special_use)
 
-        if not merged or merged[-1]["type"] != edge_type:
+        if not merged or merge_keys[-1] != merge_key:
             merged.append(
                 {
                     "type": edge_type,
                     "distance_km": distance,
                     "average_speed_kmh": None,
+                    "posted_speed_limit_kmh": None,
                     "road_classes": [],
                     "uses": [],
                     "road_names": [],
@@ -127,6 +141,8 @@ def merge_consecutive_segments(
             )
             speed_weights.append(0.0)
             weighted_speeds.append(0.0)
+            posted_limits.append([])
+            merge_keys.append(merge_key)
         else:
             merged[-1]["distance_km"] += distance
 
@@ -145,6 +161,9 @@ def merge_consecutive_segments(
             speed_weights[-1] += weight
             weighted_speeds[-1] += speed * weight
 
+        if posted_limit is not None:
+            posted_limits[-1].append(posted_limit)
+
     for index, segment in enumerate(merged):
         segment["distance_km"] = round(segment["distance_km"], 3)
         if speed_weights[index] > 0:
@@ -152,6 +171,10 @@ def merge_consecutive_segments(
                 weighted_speeds[index] / speed_weights[index],
                 1,
             )
+        if posted_limits[index]:
+            # The safest limit governs a merged section that contains more
+            # than one posted limit.
+            segment["posted_speed_limit_kmh"] = min(posted_limits[index])
 
     return merged
 
@@ -178,50 +201,17 @@ def build_route_segments(
     return merge_consecutive_segments(classified_edges)
 
 
-def _geocode_location(location_name: str) -> dict[str, Any]:
-    """Convert a place name into coordinates using Open-Meteo Geocoding."""
-
-    candidates = [location_name.strip()]
-    short_name = location_name.split(",", maxsplit=1)[0].strip()
-    if short_name and short_name not in candidates:
-        candidates.append(short_name)
-
-    results = None
-    for candidate in candidates:
-        params = {
-            "name": candidate,
-            "count": 1,
-            "language": "en",
-            "format": "json",
-        }
-
-        try:
-            response = requests.get(
-                GEOCODING_URL,
-                params=params,
-                timeout=REQUEST_TIMEOUT,
-            )
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            raise RuntimeError(
-                f"Geocoding request failed for '{location_name}': {exc}"
-            ) from exc
-
-        data = response.json()
-        results = data.get("results")
-        if results:
-            break
-
-    if not results:
-        raise ValueError(f"Location '{location_name}' was not found.")
-
-    place = results[0]
+def _resolved_location_dict(location: ResolvedLocation) -> dict[str, Any]:
+    """Serialize a resolved point while retaining the legacy name key."""
 
     return {
-        "name": place["name"],
-        "country": place.get("country"),
-        "latitude": place["latitude"],
-        "longitude": place["longitude"],
+        "raw_input": location.raw_input,
+        "canonical_name": location.canonical_name,
+        "name": location.canonical_name,
+        "latitude": location.latitude,
+        "longitude": location.longitude,
+        "source": location.source,
+        "confidence": location.confidence,
     }
 
 
@@ -333,6 +323,7 @@ def get_route(
     origin: str,
     destination: str,
     *,
+    location_resolver: LocationResolver | None = None,
     classification_config: RoadClassificationConfig = (
         DEFAULT_ROAD_CLASSIFICATION
     ),
@@ -359,18 +350,19 @@ def get_route(
           detailed edge attributes are available
     """
 
-    origin_location = _geocode_location(origin)
-    destination_location = _geocode_location(destination)
+    resolver = location_resolver or DEFAULT_LOCATION_RESOLVER
+    origin_location = resolver.resolve(origin)
+    destination_location = resolver.resolve(destination)
 
     payload = {
         "locations": [
             {
-                "lat": origin_location["latitude"],
-                "lon": origin_location["longitude"],
+                "lat": origin_location.latitude,
+                "lon": origin_location.longitude,
             },
             {
-                "lat": destination_location["latitude"],
-                "lon": destination_location["longitude"],
+                "lat": destination_location.latitude,
+                "lon": destination_location.longitude,
             },
         ],
         "costing": "auto",
@@ -406,18 +398,8 @@ def get_route(
     segments = build_route_segments(route_edges, classification_config)
 
     return {
-        "origin": {
-            "name": origin_location["name"],
-            "country": origin_location["country"],
-            "latitude": origin_location["latitude"],
-            "longitude": origin_location["longitude"],
-        },
-        "destination": {
-            "name": destination_location["name"],
-            "country": destination_location["country"],
-            "latitude": destination_location["latitude"],
-            "longitude": destination_location["longitude"],
-        },
+        "origin": _resolved_location_dict(origin_location),
+        "destination": _resolved_location_dict(destination_location),
         "distance_km": round(float(summary["length"]), 2),
         "duration_minutes": round(float(summary["time"]) / 60, 1),
         "uses_highway": bool(summary.get("has_highway", False)),

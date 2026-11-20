@@ -34,17 +34,26 @@ def filter_messages_for_llm(
     messages: Sequence[AnyMessage],
     limit: int = LLM_MESSAGE_LIMIT,
 ) -> list[AnyMessage]:
-    """Return recent messages without separating tool calls from results.
+    """Return recent context plus complete tool pairs from the current turn.
 
     State is never modified. AI tool-call messages and their matching tool
-    results are treated as an atomic unit. Invalid orphan tool messages are
-    omitted so the model always receives a valid tool protocol.
+    results are treated as an atomic unit. Stale tool payloads from older
+    turns and invalid orphan tool messages are omitted, so live data is
+    refreshed and the model always receives a valid tool protocol.
     """
 
     if limit < 1:
         raise ValueError("The LLM message limit must be at least 1.")
 
     message_list = list(messages)
+    latest_human_index = max(
+        (
+            index
+            for index, message in enumerate(message_list)
+            if isinstance(message, HumanMessage)
+        ),
+        default=-1,
+    )
     units: list[list[AnyMessage]] = []
     index = 0
 
@@ -66,7 +75,15 @@ def filter_messages_for_llm(
                     result_ids.add(tool_message.tool_call_id)
                 cursor += 1
 
-            if expected_ids and expected_ids.issubset(result_ids):
+            # Tool results are live data. Preserve complete tool protocol from
+            # the current user turn, but do not resend stale tool payloads
+            # from older turns. Older human/final-answer messages may still
+            # provide conversational context without duplicating live data.
+            if (
+                index >= latest_human_index
+                and expected_ids
+                and expected_ids.issubset(result_ids)
+            ):
                 units.append(unit)
             index = cursor
             continue
@@ -178,7 +195,10 @@ def _explicit_tool_route_context(
     folded_driver_text = driver_text.casefold()
 
     for tool_call in response.tool_calls:
-        if tool_call.get("name") != "route_tool":
+        if tool_call.get("name") not in {
+            "route_tool",
+            "energy_consumption_kwh",
+        }:
             continue
         arguments = tool_call.get("args", {})
         if not isinstance(arguments, dict):

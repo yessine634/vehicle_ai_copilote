@@ -42,3 +42,8 @@ Thumbs.db
 
 # External ML datasets
 eved-dataset/
+
+# Saved machine-learning model artifacts
+*.joblib
+*.pkl
+*.pickle

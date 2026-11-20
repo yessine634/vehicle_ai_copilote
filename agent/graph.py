@@ -21,6 +21,8 @@ def build_copilot_graph(simulator: VehicleStateProvider):
     llm = ChatGroq(
         model="openai/gpt-oss-120b",
         temperature=0,
+        reasoning_effort="medium",
+        max_tokens=1000,
     )
     llm_with_tools = llm.bind_tools(tools)
 

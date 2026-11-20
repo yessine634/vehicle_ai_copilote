@@ -6,9 +6,13 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from location.resolver import (
+    LocationNotFoundError,
+    LocationResolver,
+    ResolvedLocation,
+)
 from tools.routing import (
     DEFAULT_ROAD_CLASSIFICATION,
-    GEOCODING_URL,
     REQUEST_TIMEOUT,
     VALHALLA_ROUTE_URL,
     VALHALLA_TRACE_ATTRIBUTES_URL,
@@ -27,37 +31,36 @@ def _json_response(data: dict) -> Mock:
     return response
 
 
+def _resolved(
+    raw_input: str,
+    canonical_name: str,
+    latitude: float,
+    longitude: float,
+) -> ResolvedLocation:
+    return ResolvedLocation(
+        raw_input=raw_input,
+        canonical_name=canonical_name,
+        latitude=latitude,
+        longitude=longitude,
+        source="nominatim",
+        confidence=0.95,
+    )
+
+
+def _resolver(*locations: ResolvedLocation) -> Mock:
+    resolver = Mock(spec=LocationResolver)
+    resolver.resolve.side_effect = list(locations)
+    return resolver
+
+
 class TestGetRoute(unittest.TestCase):
     """Verify route lookup behavior without requiring internet access."""
 
     @patch("tools.routing.requests.post")
-    @patch("tools.routing.requests.get")
-    def test_get_route_returns_clean_route_data(
-        self, mock_get: Mock, mock_post: Mock
-    ) -> None:
-        origin_response = _json_response(
-            {
-                "results": [
-                    {
-                        "name": "Sfax",
-                        "country": "Tunisia",
-                        "latitude": 34.7406,
-                        "longitude": 10.7603,
-                    }
-                ]
-            }
-        )
-        destination_response = _json_response(
-            {
-                "results": [
-                    {
-                        "name": "Tunis",
-                        "country": "Tunisia",
-                        "latitude": 36.8065,
-                        "longitude": 10.1815,
-                    }
-                ]
-            }
+    def test_get_route_returns_clean_route_data(self, mock_post: Mock) -> None:
+        resolver = _resolver(
+            _resolved("Sfax", "Sfax, Tunisia", 34.7406, 10.7603),
+            _resolved("Tunis", "Tunis, Tunisia", 36.8065, 10.1815),
         )
         route_response = _json_response(
             {
@@ -72,25 +75,30 @@ class TestGetRoute(unittest.TestCase):
                 }
             }
         )
-        mock_get.side_effect = [origin_response, destination_response]
         mock_post.return_value = route_response
 
-        result = get_route("Sfax", "Tunis")
+        result = get_route("Sfax", "Tunis", location_resolver=resolver)
 
         self.assertEqual(
             result,
             {
                 "origin": {
-                    "name": "Sfax",
-                    "country": "Tunisia",
+                    "raw_input": "Sfax",
+                    "canonical_name": "Sfax, Tunisia",
+                    "name": "Sfax, Tunisia",
                     "latitude": 34.7406,
                     "longitude": 10.7603,
+                    "source": "nominatim",
+                    "confidence": 0.95,
                 },
                 "destination": {
-                    "name": "Tunis",
-                    "country": "Tunisia",
+                    "raw_input": "Tunis",
+                    "canonical_name": "Tunis, Tunisia",
+                    "name": "Tunis, Tunisia",
                     "latitude": 36.8065,
                     "longitude": 10.1815,
+                    "source": "nominatim",
+                    "confidence": 0.95,
                 },
                 "distance_km": 269.35,
                 "duration_minutes": 171.0,
@@ -101,15 +109,11 @@ class TestGetRoute(unittest.TestCase):
             },
         )
 
-        self.assertEqual(mock_get.call_count, 2)
-        for response in (origin_response, destination_response, route_response):
-            response.raise_for_status.assert_called_once_with()
-
-        origin_call, destination_call = mock_get.call_args_list
-        self.assertEqual(origin_call.args[0], GEOCODING_URL)
-        self.assertEqual(origin_call.kwargs["params"]["name"], "Sfax")
-        self.assertEqual(destination_call.kwargs["params"]["name"], "Tunis")
-        self.assertEqual(origin_call.kwargs["timeout"], REQUEST_TIMEOUT)
+        self.assertEqual(
+            [call.args[0] for call in resolver.resolve.call_args_list],
+            ["Sfax", "Tunis"],
+        )
+        route_response.raise_for_status.assert_called_once_with()
 
         route_call = mock_post.call_args
         self.assertEqual(route_call.args[0], VALHALLA_ROUTE_URL)
@@ -125,52 +129,38 @@ class TestGetRoute(unittest.TestCase):
         )
 
     @patch("tools.routing.requests.post")
-    @patch("tools.routing.requests.get")
-    def test_get_route_rejects_unknown_origin(
-        self, mock_get: Mock, mock_post: Mock
-    ) -> None:
-        mock_get.return_value = _json_response({"results": []})
+    def test_get_route_rejects_unknown_origin(self, mock_post: Mock) -> None:
+        resolver = Mock(spec=LocationResolver)
+        resolver.resolve.side_effect = LocationNotFoundError(
+            "Location 'Unknown Place' was not found."
+        )
 
         with self.assertRaisesRegex(
-            ValueError, "Location 'Unknown Place' was not found"
+            LocationNotFoundError, "Location 'Unknown Place' was not found"
         ):
-            get_route("Unknown Place", "Tunis")
+            get_route(
+                "Unknown Place",
+                "Tunis",
+                location_resolver=resolver,
+            )
 
-        mock_get.assert_called_once()
+        resolver.resolve.assert_called_once_with("Unknown Place")
         mock_post.assert_not_called()
 
     @patch("tools.routing.requests.post")
-    @patch("tools.routing.requests.get")
-    def test_get_route_retries_comma_qualified_place_with_short_name(
-        self, mock_get: Mock, mock_post: Mock
+    def test_get_route_preserves_full_comma_qualified_place(
+        self, mock_post: Mock
     ) -> None:
-        mock_get.side_effect = [
-            _json_response(
-                {
-                    "results": [
-                        {
-                            "name": "Tunis",
-                            "country": "Tunisia",
-                            "latitude": 36.8065,
-                            "longitude": 10.1815,
-                        }
-                    ]
-                }
+        destination_query = "Houmt Souk, Djerba, Tunisia"
+        resolver = _resolver(
+            _resolved("Tunis", "Tunis, Tunisia", 36.8065, 10.1815),
+            _resolved(
+                destination_query,
+                "Houmt Souk, Djerba, Tunisia",
+                33.8758,
+                10.8575,
             ),
-            _json_response({"results": []}),
-            _json_response(
-                {
-                    "results": [
-                        {
-                            "name": "Houmt Souk",
-                            "country": "Tunisia",
-                            "latitude": 33.8758,
-                            "longitude": 10.8575,
-                        }
-                    ]
-                }
-            ),
-        ]
+        )
         mock_post.return_value = _json_response(
             {
                 "trip": {
@@ -185,94 +175,50 @@ class TestGetRoute(unittest.TestCase):
             }
         )
 
-        result = get_route("Tunis", "Houmt Souk, Djerba, Tunisia")
+        result = get_route(
+            "Tunis",
+            destination_query,
+            location_resolver=resolver,
+        )
 
-        self.assertEqual(result["destination"]["name"], "Houmt Souk")
-        self.assertEqual(mock_get.call_count, 3)
         self.assertEqual(
-            mock_get.call_args_list[1].kwargs["params"]["name"],
+            result["destination"]["canonical_name"],
             "Houmt Souk, Djerba, Tunisia",
         )
         self.assertEqual(
-            mock_get.call_args_list[2].kwargs["params"]["name"],
-            "Houmt Souk",
+            resolver.resolve.call_args_list[1].args[0],
+            destination_query,
         )
 
     @patch("tools.routing.requests.post")
-    @patch("tools.routing.requests.get")
     def test_get_route_converts_routing_request_errors(
-        self, mock_get: Mock, mock_post: Mock
+        self, mock_post: Mock
     ) -> None:
-        mock_get.side_effect = [
-            _json_response(
-                {
-                    "results": [
-                        {
-                            "name": "Sfax",
-                            "country": "Tunisia",
-                            "latitude": 34.7406,
-                            "longitude": 10.7603,
-                        }
-                    ]
-                }
-            ),
-            _json_response(
-                {
-                    "results": [
-                        {
-                            "name": "Tunis",
-                            "country": "Tunisia",
-                            "latitude": 36.8065,
-                            "longitude": 10.1815,
-                        }
-                    ]
-                }
-            ),
-        ]
+        resolver = _resolver(
+            _resolved("Sfax", "Sfax, Tunisia", 34.7406, 10.7603),
+            _resolved("Tunis", "Tunis, Tunisia", 36.8065, 10.1815),
+        )
         mock_post.side_effect = requests.Timeout("request timed out")
 
         with self.assertRaisesRegex(
             RuntimeError, "Valhalla routing request failed"
         ):
-            get_route("Sfax", "Tunis")
+            get_route("Sfax", "Tunis", location_resolver=resolver)
 
     @patch("tools.routing.requests.post")
-    @patch("tools.routing.requests.get")
     def test_get_route_rejects_unexpected_response(
-        self, mock_get: Mock, mock_post: Mock
+        self, mock_post: Mock
     ) -> None:
-        mock_get.side_effect = [
-            _json_response(
-                {
-                    "results": [
-                        {
-                            "name": "Sfax",
-                            "country": "Tunisia",
-                            "latitude": 34.7406,
-                            "longitude": 10.7603,
-                        }
-                    ]
-                }
-            ),
-            _json_response(
-                {
-                    "results": [
-                        {
-                            "name": "Tunis",
-                            "country": "Tunisia",
-                            "latitude": 36.8065,
-                            "longitude": 10.1815,
-                        }
-                    ]
-                }
-            ),
-        ]
+        resolver = _resolver(
+            _resolved("Sfax", "Sfax, Tunisia", 34.7406, 10.7603),
+            _resolved("Tunis", "Tunis, Tunisia", 36.8065, 10.1815),
+        )
         mock_post.return_value = _json_response({"status": "ok"})
 
         with self.assertRaisesRegex(
             RuntimeError, "Valhalla returned an unexpected response format"
         ):
-            get_route("Sfax", "Tunis")
+            get_route("Sfax", "Tunis", location_resolver=resolver)
 
     @unittest.skipUnless(
         os.getenv("RUN_LIVE_ROUTING_TEST") == "1",
@@ -281,8 +227,8 @@ class TestGetRoute(unittest.TestCase):
     def test_live_route_from_sfax_to_tunis(self) -> None:
         route = get_route("Sfax", "Tunis")
 
-        self.assertEqual(route["origin"]["name"], "Sfax")
-        self.assertEqual(route["destination"]["name"], "Tunis")
+        self.assertIn("Sfax", route["origin"]["canonical_name"])
+        self.assertIn("Tunis", route["destination"]["canonical_name"])
         self.assertGreater(route["distance_km"], 0)
         self.assertGreater(route["duration_minutes"], 0)
         self.assertTrue(route["segments"])
@@ -343,6 +289,28 @@ class TestRouteSegmentation(unittest.TestCase):
             ],
         )
 
+    def test_does_not_merge_incompatible_posted_limits(self) -> None:
+        merged = merge_consecutive_segments(
+            [
+                {
+                    "distance_km": 5,
+                    "type": "highway",
+                    "speed_limit_kmh": 110,
+                    "use": "road",
+                },
+                {
+                    "distance_km": 2,
+                    "type": "highway",
+                    "speed_limit_kmh": 70,
+                    "use": "ramp",
+                },
+            ]
+        )
+
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(merged[0]["posted_speed_limit_kmh"], 110.0)
+        self.assertEqual(merged[1]["posted_speed_limit_kmh"], 70.0)
+
     def test_builds_mixed_urban_highway_route(self) -> None:
         segments = build_route_segments(
             [
@@ -368,40 +336,17 @@ class TestRouteSegmentation(unittest.TestCase):
         self.assertEqual([item["type"] for item in segments], ["urban", "highway"])
         self.assertEqual(segments[0]["average_speed_kmh"], 45.0)
         self.assertEqual(segments[1]["road_names"], ["A1"])
+        self.assertEqual(segments[1]["posted_speed_limit_kmh"], 110.0)
 
     @patch("tools.routing.requests.post")
-    @patch("tools.routing.requests.get")
     def test_get_route_adds_segments_from_trace_attributes(
         self,
-        mock_get: Mock,
         mock_post: Mock,
     ) -> None:
-        mock_get.side_effect = [
-            _json_response(
-                {
-                    "results": [
-                        {
-                            "name": "Sfax",
-                            "country": "Tunisia",
-                            "latitude": 34.7406,
-                            "longitude": 10.7603,
-                        }
-                    ]
-                }
-            ),
-            _json_response(
-                {
-                    "results": [
-                        {
-                            "name": "Tunis",
-                            "country": "Tunisia",
-                            "latitude": 36.8065,
-                            "longitude": 10.1815,
-                        }
-                    ]
-                }
-            ),
-        ]
+        resolver = _resolver(
+            _resolved("Sfax", "Sfax, Tunisia", 34.7406, 10.7603),
+            _resolved("Tunis", "Tunis, Tunisia", 36.8065, 10.1815),
+        )
         route_response = _json_response(
             {
                 "trip": {
@@ -463,7 +408,11 @@ class TestRouteSegmentation(unittest.TestCase):
         )
         mock_post.side_effect = [route_response, trace_response]
 
-        result = get_route("Sfax", "Tunis")
+        result = get_route(
+            "Sfax",
+            "Tunis",
+            location_resolver=resolver,
+        )
 
         self.assertEqual(
             [
