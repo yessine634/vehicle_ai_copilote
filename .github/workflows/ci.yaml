@@ -29,6 +29,7 @@ jobs:
       # Explicitly disable external/live tests.
       RUN_LIVE_WEATHER_TEST: "0"
       RUN_LIVE_ROUTING_TEST: "0"
+      RUN_LIVE_LOCATION_TEST: "0"
       RUN_LIVE_TOOL_CALLING_TEST: "0"
       RUN_LIVE_TOOL_TESTS: "0"
       RUN_SUMO_GUI_DEMO: "0"
@@ -63,14 +64,34 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip check
 
-      - name: Verify SUMO Python integration
+      - name: Verify headless SUMO Python integration
         run: |
-          python tests/test_sumo_install.py
+          python -c "import traci, sumolib; print('TraCI and sumolib imports successful')"
 
       - name: Compile Python files
         run: |
           python -m compileall agent simulation tools tests
 
-      - name: Run unit and headless integration tests
+      - name: Run offline unit tests
         run: |
-          python -m unittest discover -s tests -p "test_*.py" -v
+          python -m unittest -v \
+            tests.test_agent_memory \
+            tests.test_diagnostic \
+            tests.test_energy_estimation \
+            tests.test_ev_health \
+            tests.test_location_resolver \
+            tests.test_osm_network \
+            tests.test_rag \
+            tests.test_route_energy \
+            tests.test_routing \
+            tests.test_tool_calling \
+            tests.test_vehicle \
+            tests.test_weather
+
+      - name: Run headless SUMO integration tests
+        run: |
+          python -m unittest -v \
+            tests.test_all_tools \
+            tests.test_sumo_real_route \
+            tests.test_sumo_runner \
+            tests.test_trip_simulator

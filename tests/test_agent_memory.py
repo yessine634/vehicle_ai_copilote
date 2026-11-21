@@ -67,7 +67,7 @@ def tool_call(name: str, arguments: dict, call_id: str) -> AIMessage:
 
 
 class MessageFilteringTests(unittest.TestCase):
-    def test_last_ten_messages_do_not_modify_full_history(self) -> None:
+    def test_last_ten_conversational_messages_do_not_modify_full_history(self) -> None:
         messages = [
             HumanMessage(content=f"Message {index}")
             for index in range(12)
@@ -102,13 +102,87 @@ class MessageFilteringTests(unittest.TestCase):
 
         filtered = filter_messages_for_llm(messages)
 
-        self.assertLessEqual(len(filtered), 10)
+        self.assertEqual(len(filtered), 11)
         self.assertIn(route_request, filtered)
         self.assertIn(route_result_message, filtered)
         self.assertLess(
             filtered.index(route_request),
             filtered.index(route_result_message),
         )
+
+    def test_all_current_turn_tool_pairs_are_kept_beyond_limit(self) -> None:
+        question = HumanMessage(content="Run a long multi-tool workflow")
+        interactions = []
+        for number in range(12):
+            request = tool_call("route_tool", {}, f"call-{number}")
+            result = ToolMessage(
+                content=f"result-{number}",
+                tool_call_id=f"call-{number}",
+                name="route_tool",
+            )
+            interactions.extend([request, result])
+
+        filtered = filter_messages_for_llm([question, *interactions])
+
+        self.assertEqual(filtered, [question, *interactions])
+        self.assertEqual(len(filtered), 25)
+
+    def test_multiple_calls_in_one_ai_message_require_all_matching_results(self) -> None:
+        request = AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "route_tool", "args": {}, "id": "r1", "type": "tool_call"},
+                {"name": "weather_tool", "args": {}, "id": "w1", "type": "tool_call"},
+            ],
+        )
+        route_result = ToolMessage(content="route", tool_call_id="r1", name="route_tool")
+        weather_result = ToolMessage(content="weather", tool_call_id="w1", name="weather_tool")
+        question = HumanMessage(content="Route and weather")
+
+        filtered = filter_messages_for_llm([question, request, route_result, weather_result])
+
+        self.assertEqual(filtered, [question, request, route_result, weather_result])
+
+        incomplete = filter_messages_for_llm([question, request, route_result])
+        self.assertEqual(incomplete, [question])
+
+    def test_conversation_and_current_tools_merge_chronologically(self) -> None:
+        question = HumanMessage(content="Current question")
+        request = tool_call("route_tool", {}, "current")
+        result = ToolMessage(content="route", tool_call_id="current", name="route_tool")
+        answer = AIMessage(content="Current answer")
+
+        self.assertEqual(
+            filter_messages_for_llm([question, request, result, answer]),
+            [question, request, result, answer],
+        )
+
+    def test_historical_tools_excluded_but_recent_plain_conversation_kept(self) -> None:
+        old_request = tool_call("route_tool", {}, "old")
+        old_result = ToolMessage(content="stale", tool_call_id="old", name="route_tool")
+        history = [HumanMessage(content=f"h{i}") for i in range(11)]
+        current = HumanMessage(content="current")
+
+        filtered = filter_messages_for_llm(
+            [history[0], old_request, old_result, *history[1:], current]
+        )
+
+        self.assertNotIn(old_request, filtered)
+        self.assertNotIn(old_result, filtered)
+        self.assertEqual(len(filtered), 10)
+        self.assertEqual(filtered[-1], current)
+
+    def test_latest_user_message_kept_with_long_tool_loop(self) -> None:
+        question = HumanMessage(content="Latest user question")
+        interactions = []
+        for number in range(15):
+            interactions.extend([
+                tool_call("route_tool", {}, f"loop-{number}"),
+                ToolMessage(content="ok", tool_call_id=f"loop-{number}", name="route_tool"),
+            ])
+        filtered = filter_messages_for_llm([question, *interactions])
+        self.assertEqual(filtered[0], question)
+        self.assertEqual(len(filtered), 31)
 
     def test_orphan_tool_result_is_not_sent_to_llm(self) -> None:
         orphan = ToolMessage(

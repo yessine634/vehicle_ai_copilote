@@ -7,6 +7,7 @@ import unittest
 
 from simulation.ev_config import BMW_I3_120_AH, SUMO_EV_MODEL_APPROXIMATIONS
 from simulation.energy_estimation import (
+    DEFAULT_MODEL_PATH,
     FEATURES,
     INDIA_MODEL_TARGET,
     TRAFFIC_CONDITION_CODES,
@@ -388,6 +389,10 @@ class EnergySubgraphTests(unittest.TestCase):
                 self.assertEqual(features["traffic_condition"], expected_code)
                 self.assertIsInstance(features["traffic_condition"], str)
 
+    @unittest.skipUnless(
+        DEFAULT_MODEL_PATH.is_file(),
+        "The saved ML artifact is local and intentionally excluded from Git.",
+    )
     def test_saved_model_artifact_has_exact_target_and_feature_order(self) -> None:
         model = SavedEnergyModel()
         self.assertEqual(model.target, "energy_consumption_kWh_per_km")
