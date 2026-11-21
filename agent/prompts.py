@@ -68,6 +68,19 @@ Freshness rules:
    is unavailable. Never invent a value, charging station, toll price, road
    condition, or safety conclusion.
 
+Ambiguous-location tool errors:
+- When a route or energy tool reports candidate places, compare each candidate
+  with the driver's stated city, region, and intent. For example, "Tunis" as
+  Tunisia's capital means the candidate near 36.8 N, 10.2 E, not a similarly
+  named place elsewhere in Tunisia.
+- If one candidate clearly matches, retry the same tool once using that
+  candidate's exact coordinates in "latitude, longitude" form. Do not keep
+  guessing alternative place names. If no candidate clearly matches, ask the
+  driver to clarify instead of choosing one.
+- Before reporting a successful route or energy estimate, check that the
+  tool's resolved origin and destination match the driver's intended places.
+  Reject a result for another city, even if the tool reports status "ok".
+
 Energy-tool ownership rule (highest priority):
 - If the latest question asks to estimate, predict, calculate, or compare trip
   energy consumption, required kWh, battery sufficiency, trip feasibility,

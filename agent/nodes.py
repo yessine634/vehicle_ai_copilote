@@ -34,12 +34,11 @@ def filter_messages_for_llm(
     messages: Sequence[AnyMessage],
     limit: int = LLM_MESSAGE_LIMIT,
 ) -> list[AnyMessage]:
-    """Return recent context plus complete tool pairs from the current turn.
+    """Return recent conversation plus every complete tool group this turn.
 
-    State is never modified. AI tool-call messages and their matching tool
-    results are treated as an atomic unit. Stale tool payloads from older
-    turns and invalid orphan tool messages are omitted, so live data is
-    refreshed and the model always receives a valid tool protocol.
+    The conversation limit applies only to human messages and plain assistant
+    replies. Complete current-turn tool requests and results are added without
+    that limit. The original state history is never modified.
     """
 
     if limit < 1:
@@ -54,7 +53,14 @@ def filter_messages_for_llm(
         ),
         default=-1,
     )
-    units: list[list[AnyMessage]] = []
+    conversation_indices = [
+        index
+        for index, message in enumerate(message_list)
+        if isinstance(message, HumanMessage)
+        or (isinstance(message, AIMessage) and not message.tool_calls)
+    ]
+    selected_conversation_indices = set(conversation_indices[-limit:])
+    selected_tool_indices: set[int] = set()
     index = 0
 
     while index < len(message_list):
@@ -62,8 +68,7 @@ def filter_messages_for_llm(
 
         if isinstance(message, AIMessage) and message.tool_calls:
             expected_ids = _tool_call_ids(message)
-            unit: list[AnyMessage] = [message]
-            result_ids: set[str] = set()
+            result_indices: dict[str, int] = {}
             cursor = index + 1
 
             while cursor < len(message_list) and isinstance(
@@ -71,41 +76,23 @@ def filter_messages_for_llm(
             ):
                 tool_message = message_list[cursor]
                 if tool_message.tool_call_id in expected_ids:
-                    unit.append(tool_message)
-                    result_ids.add(tool_message.tool_call_id)
+                    result_indices[tool_message.tool_call_id] = cursor
                 cursor += 1
 
-            # Tool results are live data. Preserve complete tool protocol from
-            # the current user turn, but do not resend stale tool payloads
-            # from older turns. Older human/final-answer messages may still
-            # provide conversational context without duplicating live data.
             if (
                 index >= latest_human_index
                 and expected_ids
-                and expected_ids.issubset(result_ids)
+                and expected_ids.issubset(result_indices)
             ):
-                units.append(unit)
+                selected_tool_indices.add(index)
+                selected_tool_indices.update(result_indices.values())
             index = cursor
             continue
 
-        if not isinstance(message, ToolMessage):
-            units.append([message])
         index += 1
 
-    selected_units: list[list[AnyMessage]] = []
-    selected_count = 0
-    for unit in reversed(units):
-        if selected_units and selected_count + len(unit) > limit:
-            break
-        if not selected_units or selected_count + len(unit) <= limit:
-            selected_units.append(unit)
-            selected_count += len(unit)
-
-    return [
-        message
-        for unit in reversed(selected_units)
-        for message in unit
-    ]
+    selected_indices = selected_conversation_indices | selected_tool_indices
+    return [message_list[i] for i in sorted(selected_indices)]
 
 
 def _clean_location(value: str) -> str | None:
