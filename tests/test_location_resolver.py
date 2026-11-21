@@ -275,6 +275,23 @@ class LocationResolverTests(unittest.TestCase):
         self.assertIn("Test Place A", str(context.exception))
         self.assertIn("Test Place B", str(context.exception))
 
+    def test_ambiguous_search_is_not_cached_as_a_location(self) -> None:
+        resolver, client, response = _resolver_for([])
+        response.json.side_effect = [
+            [
+                _candidate("Test Place A, Sfax, Tunisia", 34.75, 10.75),
+                _candidate("Test Place B, Sfax, Tunisia", 34.75, 10.75),
+            ],
+            [_candidate("Test Place A, Sfax, Tunisia", 34.75, 10.75)],
+        ]
+
+        with self.assertRaises(AmbiguousLocationError):
+            resolver.resolve("Test Place, Sfax")
+        resolved = resolver.resolve("Test Place, Sfax")
+
+        self.assertEqual(resolved.canonical_name, "Test Place A, Sfax, Tunisia")
+        self.assertEqual(client.get.call_count, 2)
+
     def test_repeated_normalized_query_uses_memory_cache(self) -> None:
         resolver, client, _ = _resolver_for(
             [_candidate("Gremda, Sfax, Tunisia", 34.75, 10.72)]
