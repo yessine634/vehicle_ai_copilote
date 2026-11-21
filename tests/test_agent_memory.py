@@ -246,6 +246,58 @@ class MessageFilteringTests(unittest.TestCase):
             [latest_question, current_request, current_result],
         )
 
+    def test_long_history_keeps_only_current_complete_tool_groups(self) -> None:
+        history = []
+        for index in range(12):
+            request = tool_call("route_tool", {}, f"historical-{index}")
+            result = ToolMessage(
+                content=f"stale-route-{index}",
+                tool_call_id=f"historical-{index}",
+                name="route_tool",
+            )
+            history.extend([
+                HumanMessage(content=f"Earlier question {index}"),
+                request,
+                result,
+                AIMessage(content=f"Earlier answer {index}"),
+            ])
+
+        question = HumanMessage(content="Check the route and weather again")
+        parallel_request = AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "route_tool", "args": {}, "id": "new-route", "type": "tool_call"},
+                {"name": "weather_tool", "args": {}, "id": "new-weather", "type": "tool_call"},
+            ],
+        )
+        # Tool results may arrive in a different order from the requests.
+        weather_result = ToolMessage(
+            content="fresh-weather", tool_call_id="new-weather", name="weather_tool"
+        )
+        route_result = ToolMessage(
+            content="fresh-route", tool_call_id="new-route", name="route_tool"
+        )
+        messages = [
+            *history, question, parallel_request, weather_result, route_result
+        ]
+
+        filtered = filter_messages_for_llm(messages)
+
+        recent_conversation = [
+            message for message in messages
+            if isinstance(message, HumanMessage)
+            or isinstance(message, AIMessage) and not message.tool_calls
+        ][-10:]
+        self.assertEqual(
+            filtered,
+            [*recent_conversation, parallel_request, weather_result, route_result],
+        )
+        self.assertEqual(len(messages), 52)
+        self.assertFalse(any(
+            isinstance(message, ToolMessage) and "stale" in message.content
+            for message in filtered
+        ))
+
 
 class RouteContextExtractionTests(unittest.TestCase):
     def test_explicit_origin_and_destination_are_extracted(self) -> None:
@@ -561,7 +613,7 @@ class ReActGraphTests(unittest.TestCase):
             calculation(25.0),
         ]
         mock_build_energy_graph.return_value = fake_energy_graph
-        graph, _, _ = self.build_graph(
+        graph, _, bound_llm = self.build_graph(
             [
                 tool_call("energy_consumption_kwh", {}, "energy-1"),
                 AIMessage(content="First fresh estimate."),
@@ -590,6 +642,14 @@ class ReActGraphTests(unittest.TestCase):
             and message.name == "energy_consumption_kwh"
         ]
         self.assertEqual(len(energy_results), 2)
+        self.assertEqual(
+            [message.tool_call_id for message in energy_results],
+            ["energy-1", "energy-2"],
+        )
+        second_turn_llm_input = bound_llm.invoke.call_args.args[0]
+        self.assertIn(energy_results[1], second_turn_llm_input)
+        self.assertNotIn(energy_results[0], second_turn_llm_input)
+        self.assertEqual(len(result["messages"]), 8)
 
 
 def route_result() -> dict:
